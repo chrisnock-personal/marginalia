@@ -1,5 +1,5 @@
 import { Markdown } from '@tiptap/markdown'
-import { EditorContent, useEditor } from '@tiptap/react'
+import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useEffect } from 'react'
 import type { Comment, CommentAnchor } from '../shared/types'
@@ -20,6 +20,22 @@ export default function Editor({ documentKey, markdown, comments, onChange, onAd
     content: markdown,
     contentType: 'markdown',
     onUpdate: ({ editor: current }) => onChange(current.getMarkdown()),
+  })
+
+  // Tiptap 3 does not re-render on every transaction; subscribe to the bits of
+  // editor state the toolbar depends on.
+  const state = useEditorState({
+    editor,
+    selector: ({ editor: current }) => ({
+      selectionEmpty: current.state.selection.empty,
+      bold: current.isActive('bold'),
+      italic: current.isActive('italic'),
+      heading: current.isActive('heading', { level: 2 }),
+      bullet: current.isActive('bulletList'),
+      ordered: current.isActive('orderedList'),
+      quote: current.isActive('blockquote'),
+      codeBlock: current.isActive('codeBlock'),
+    }),
   })
 
   // Reload the editor only when a different document is opened, not on every keystroke.
@@ -55,18 +71,18 @@ export default function Editor({ documentKey, markdown, comments, onChange, onAd
   return (
     <div className="editor-shell">
       <div className="toolbar">
-        {tool('B', () => editor.chain().focus().toggleBold().run(), editor.isActive('bold'), 'Bold')}
-        {tool('I', () => editor.chain().focus().toggleItalic().run(), editor.isActive('italic'), 'Italic')}
-        {tool('H2', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), editor.isActive('heading', { level: 2 }), 'Heading 2')}
-        {tool('• list', () => editor.chain().focus().toggleBulletList().run(), editor.isActive('bulletList'), 'Bullet list')}
-        {tool('1. list', () => editor.chain().focus().toggleOrderedList().run(), editor.isActive('orderedList'), 'Ordered list')}
-        {tool('quote', () => editor.chain().focus().toggleBlockquote().run(), editor.isActive('blockquote'), 'Quote')}
-        {tool('code', () => editor.chain().focus().toggleCodeBlock().run(), editor.isActive('codeBlock'), 'Code block')}
+        {tool('B', () => editor.chain().focus().toggleBold().run(), state?.bold, 'Bold')}
+        {tool('I', () => editor.chain().focus().toggleItalic().run(), state?.italic, 'Italic')}
+        {tool('H2', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), state?.heading, 'Heading 2')}
+        {tool('• list', () => editor.chain().focus().toggleBulletList().run(), state?.bullet, 'Bullet list')}
+        {tool('1. list', () => editor.chain().focus().toggleOrderedList().run(), state?.ordered, 'Ordered list')}
+        {tool('quote', () => editor.chain().focus().toggleBlockquote().run(), state?.quote, 'Quote')}
+        {tool('code', () => editor.chain().focus().toggleCodeBlock().run(), state?.codeBlock, 'Code block')}
         <span className="toolbar-divider" />
         {tool('↶', () => editor.chain().focus().undo().run(), false, 'Undo')}
         {tool('↷', () => editor.chain().focus().redo().run(), false, 'Redo')}
         <span className="toolbar-divider" />
-        <button type="button" className="tool tool-comment" onClick={addComment} disabled={editor.state.selection.empty}>
+        <button type="button" className="tool tool-comment" onClick={addComment} disabled={state?.selectionEmpty ?? true}>
           + Comment
         </button>
       </div>
