@@ -32,13 +32,18 @@ test('local provider reads files and publishes a branch with comments.json', asy
     assert.equal(await provider.headSha('test', 'main'), git(['rev-parse', 'HEAD'], repo))
     assert.ok((await provider.listMarkdownFiles('test')).some((f) => f.path === 'docs/guide.md'))
     assert.match((await provider.readFile('test', 'docs/guide.md')) ?? '', /Original text/)
+    assert.equal(await provider.readAsset('test', 'docs/assets/missing.png'), null)
 
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
     const result = await provider.publish({
       provider: 'local',
       repo: 'test',
       branch: 'marginalia/test-edit',
       commitMessage: 'Edit guide',
-      files: [{ path: 'docs/guide.md', content: '# Guide\n\nChanged text.\n' }],
+      files: [
+        { path: 'docs/guide.md', content: '# Guide\n\nChanged text.\n' },
+        { path: 'docs/assets/pic.png', content: png.toString('base64'), encoding: 'base64' },
+      ],
       comments: {
         version: 1,
         comments: [
@@ -60,6 +65,15 @@ test('local provider reads files and publishes a branch with comments.json', asy
     assert.equal(result.prUrl, undefined)
     assert.match(result.notes.join(' '), /not GitHub/)
     assert.match(git(['show', 'marginalia/test-edit:docs/guide.md'], remote), /Changed text/)
+    const publishedPng = execFileSync('git', ['show', 'marginalia/test-edit:docs/assets/pic.png'], {
+      cwd: remote,
+      encoding: 'buffer',
+    })
+    assert.equal(Buffer.compare(publishedPng, png), 0, 'base64 asset must be written byte-for-byte')
+    assert.equal(
+      Buffer.compare((await provider.readAsset('test', 'docs/assets/pic.png', 'marginalia/test-edit')) ?? Buffer.alloc(0), png),
+      0,
+    )
     const comments = JSON.parse(git(['show', 'marginalia/test-edit:comments.json'], remote))
     assert.equal(comments.comments[0].body, 'Check this sentence')
     assert.match(readFileSync(join(repo, 'docs', 'guide.md'), 'utf8'), /Original text/)

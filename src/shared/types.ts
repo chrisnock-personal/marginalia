@@ -57,6 +57,8 @@ export interface CommentsFile {
 export interface FileChange {
   path: string
   content: string
+  /** base64 for binary assets such as pasted images; defaults to utf8. */
+  encoding?: 'utf8' | 'base64'
 }
 
 export interface PublishRequest {

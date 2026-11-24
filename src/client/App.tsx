@@ -3,6 +3,7 @@ import { emptyComments, newCommentId } from '../shared/comments'
 import type {
   Comment,
   CommentAnchor,
+  FileChange,
   FileEntry,
   ProviderId,
   ProviderInfo,
@@ -24,6 +25,7 @@ export default function App() {
   const [path, setPath] = useState('')
   const [original, setOriginal] = useState('')
   const [markdown, setMarkdown] = useState('')
+  const [assets, setAssets] = useState<FileChange[]>([])
   const [comments, setComments] = useState(emptyComments().comments)
   const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null)
   const [baseSha, setBaseSha] = useState('')
@@ -38,6 +40,7 @@ export default function App() {
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
   const [patOpen, setPatOpen] = useState(false)
   const [branch, setBranch] = useState('marginalia/edit')
+  const baseRef = repos.find((repo) => repo.id === repoId)?.defaultBranch
 
   const refreshConfig = async () => {
     const result = await api.config()
@@ -68,6 +71,7 @@ export default function App() {
     setRepoId('')
     setFiles([])
     setPath('')
+    setAssets([])
     setPublishResult(null)
     const info = config.find((p) => p.id === provider)
     if (!info?.configured) return
@@ -93,7 +97,6 @@ export default function App() {
     setLoadingFile(true)
     setError(null)
     setPendingAnchor(null)
-    const baseRef = repos.find((repo) => repo.id === repoId)?.defaultBranch
     Promise.all([
       api.file(provider, repoId, path),
       api.comments(provider, repoId),
@@ -119,6 +122,28 @@ export default function App() {
     setFiles([])
   }
 
+  /** Show repo-relative images from the current branch/asset endpoint. */
+  const resolveSrc = (src: string): string => {
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(src)) return src
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : ''
+    const resolved = new URL(src, `https://marginalia.local/${dir}`).pathname.slice(1)
+    return api.assetSrc(provider, repoId, resolved, baseRef)
+  }
+
+  /** Stage pasted/dropped image bytes so they travel in the same PR. */
+  const stageAsset = (file: File, src: string) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result)
+      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+      const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+      const assetPath = [dir, src].filter(Boolean).join('/')
+      setAssets((current) => [...current, { path: assetPath, content: base64, encoding: 'base64' }])
+      setNotice(`Staged ${file.name} — it will be added to the PR`)
+    }
+    reader.readAsDataURL(file)
+  }
+
   const openPublish = () => {
     const slug = path.split('/').pop()?.replace(/\.(md|markdown)$/i, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase() ?? 'edit'
     setBranch(`marginalia/${slug}-${Date.now().toString(36)}`)
@@ -134,15 +159,20 @@ export default function App() {
       const result = await api.publish({
         provider,
         repo: repoId,
-        baseRef: repos.find((repo) => repo.id === repoId)?.defaultBranch,
+        baseRef,
         baseSha,
         branch: values.branch,
         commitMessage: values.commitMessage,
-        files: markdown === original ? [] : [{ path, content: markdown }],
+        files: [
+          ...(markdown === original ? [] : [{ path, content: markdown }]),
+          ...assets,
+        ],
         comments: { version: 1, comments },
         pr: { title: values.title, body: values.body },
       })
       setPublishResult(result)
+      setOriginal(markdown)
+      setAssets([])
       setPublishOpen(false)
     } catch (err) {
       const message = (err as Error).message
@@ -189,12 +219,13 @@ export default function App() {
 
   const reloadFile = () => {
     setPublishOpen(false)
+    setAssets([])
     setReloadKey((key) => key + 1)
   }
 
   const github = config.find((p) => p.id === 'github')
   const anyConfigured = config.some((p) => p.configured)
-  const dirty = markdown !== original
+  const dirty = markdown !== original || assets.length > 0
 
   return (
     <div className="app">
@@ -221,7 +252,11 @@ export default function App() {
       </header>
 
       {error && <div className="banner error-banner">{error}</div>}
-      {notice && <div className="banner success-banner">{notice}</div>}
+      {notice && (
+        <div className={notice.startsWith('Staged') ? 'banner info-banner' : 'banner success-banner'}>
+          {notice}
+        </div>
+      )}
       {!anyConfigured && (
         <div className="banner setup-banner">
           No git source configured. Set <code>MARGINALIA_LOCAL_REPOS</code> to colon-separated repo
@@ -245,7 +280,7 @@ export default function App() {
                 <button
                   type="button"
                   className={file.path === path ? 'file active' : 'file'}
-                  onClick={() => { setPath(file.path); setPublishResult(null) }}
+                  onClick={() => { setPath(file.path); setAssets([]); setPublishResult(null) }}
                 >
                   {file.path.split('/').pop()}
                 </button>
@@ -261,7 +296,10 @@ export default function App() {
               <div className="doc-header">
                 <div>
                   <h2>{path}</h2>
-                  <span className="muted">{dirty ? 'Unpublished edits' : 'No local edits'} · {comments.filter((c) => c.path === path).length} comment(s)</span>
+                  <span className="muted">
+                    {dirty ? 'Unpublished edits' : 'No local edits'} · {comments.filter((c) => c.path === path).length} comment(s)
+                    {assets.length > 0 && ` · ${assets.length} image${assets.length === 1 ? '' : 's'} staged`}
+                  </span>
                 </div>
                 <button type="button" className="primary" onClick={openPublish}>Publish PR</button>
               </div>
@@ -277,6 +315,8 @@ export default function App() {
                 documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
                 markdown={markdown}
                 comments={comments}
+                resolveSrc={resolveSrc}
+                onAsset={stageAsset}
                 onChange={setMarkdown}
                 onAddComment={(anchor) => {
                   if (!anchor) setError('Select some text before adding a comment')

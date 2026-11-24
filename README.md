@@ -6,7 +6,12 @@ sidecar `comments.json` as a pull request.
 
 ## Features
 
-- TipTap/ProseMirror WYSIWYG editing with bidirectional Markdown (`@tiptap/markdown`).
+- TipTap/ProseMirror WYSIWYG editing with bidirectional Markdown (`@tiptap/markdown`), including
+  GFM tables and images.
+- Tables can be inserted and edited with row/column tools; images can be added by URL or by
+  pasting, dropping or selecting local image files.
+- Pasted/dropped images are staged as binary files next to the Markdown file and committed in the
+  same PR as the edit.
 - Two git sources: configured local repositories (git CLI) and GitHub (REST API).
 - Inline comments anchored to text, with threaded replies, stored in a separate `comments.json` in the PR.
 - Publishing creates a branch, one commit and optionally a PR — without touching your checkout.
@@ -64,10 +69,14 @@ The env/file token is the fallback after a UI token; **Clear token** removes onl
 ## Workflow
 
 1. Choose a provider, repo and `.md` file.
-2. Select text, click **+ Comment**, and write the note. Use **Reply** to continue a thread.
-3. Click **Publish PR**, check the branch/commit/PR details, and publish.
-4. If the base branch moved in the meantime, publishing returns a conflict prompt and offers a reload.
-5. The PR contains the edited Markdown (if changed) and `comments.json`.
+2. Edit as you would in a word processor: headings, lists, tables, links and images round-trip as
+   Markdown. Use **table** to insert a grid and the row/column tools that appear inside it.
+3. Insert an image by URL, or paste/drop/select an image file — it is staged in an `assets/` folder
+   beside the document and included in the PR.
+4. Select text, click **+ Comment**, and write the note. Use **Reply** to continue a thread.
+5. Click **Publish PR**, check the branch/commit/PR details, and publish.
+6. If the base branch moved in the meantime, publishing returns a conflict prompt and offers a reload.
+7. The PR contains the edited Markdown (if changed), any staged image assets and `comments.json`.
 
 Example `comments.json`:
 
@@ -113,4 +122,6 @@ Design notes: [docs/architecture.md](docs/architecture.md). API reference: [docs
 Prototype scope: single-user, single-document editing at a time; one GitHub identity per server
 process (no per-user sessions). Conflict detection is branch-level, not three-way file merges.
 Comments highlight in the editor but are not posted as GitHub review comments. Only Markdown files
-are browsed; images and other assets must already exist in the target branch.
+are browsed. Images can be added and reordered, but not renamed/moved or deleted through an asset
+manager; pasted assets are staged in memory and are not uploaded until publish. No HTML/PDF export
+yet.

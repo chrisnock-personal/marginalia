@@ -80,6 +80,11 @@ List Markdown files (`.md`, `.markdown`) in the repo at `ref`, or the default br
 
 Read a file. Returns `{ "path": "docs/guide.md", "content": "# Guide\n..." }`; `404` if absent.
 
+## `GET /repos/:provider/:repo/asset?path=<path>&ref=<optional>`
+
+Return the raw bytes of a repo asset (images) with an appropriate `Content-Type`. `404` if absent.
+Used by the editor to display repo-relative Markdown images.
+
 ## `POST /publish`
 
 Create a branch, commit and PR.
@@ -92,7 +97,10 @@ Create a branch, commit and PR.
   "baseSha": "a1b2c3d...",
   "branch": "marginalia/guide-m1abc",
   "commitMessage": "Edit guide.md",
-  "files": [{ "path": "docs/guide.md", "content": "# Updated guide\n" }],
+  "files": [
+    { "path": "docs/guide.md", "content": "# Updated guide\n" },
+    { "path": "docs/assets/pic.png", "content": "iVBORw0KGg==", "encoding": "base64" }
+  ],
   "comments": {
     "version": 1,
     "comments": []
@@ -101,7 +109,8 @@ Create a branch, commit and PR.
 }
 ```
 
-`files` may be empty when only comments changed. `baseSha` is optional; when supplied and different
+`files` may be empty when only comments changed; `encoding` defaults to `utf8`, while `base64` is
+for binary assets such as pasted images. `baseSha` is optional; when supplied and different
 from the current head, the request fails with `409` and `{ "error": "Base branch changed …" }`.
 Replies in `comments` add `"parentId": "<root comment id>"`. `commentsPath` defaults to
 `comments.json`. `pr` is optional; without it the branch is pushed but no PR is opened.

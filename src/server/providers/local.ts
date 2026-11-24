@@ -90,6 +90,25 @@ export class LocalGitProvider implements GitProvider {
     return readFile(full, 'utf8')
   }
 
+  async readAsset(repo: string, path: string, ref?: string): Promise<Buffer | null> {
+    const root = this.repoPath(repo)
+    if (ref) {
+      try {
+        const output = await execFileAsync(
+          'git',
+          ['show', `${ref}:${checkRelativePath(path)}`],
+          { cwd: root, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
+        )
+        return output.stdout as Buffer
+      } catch {
+        return null
+      }
+    }
+    const full = inside(root, path)
+    if (!existsSync(full)) return null
+    return readFile(full)
+  }
+
   async headSha(repo: string, ref?: string): Promise<string> {
     return run(
       'git',
@@ -104,10 +123,14 @@ export class LocalGitProvider implements GitProvider {
 
     const commentsPath = checkRelativePath(request.commentsPath ?? DEFAULT_COMMENTS_PATH)
     const changes = [
-      ...request.files.map((file) => ({ path: checkRelativePath(file.path), content: file.content })),
-      { path: commentsPath, content: serializeComments(request.comments) },
+      ...request.files.map((file) => ({
+        path: checkRelativePath(file.path),
+        content: file.content,
+        encoding: file.encoding ?? ('utf8' as const),
+      })),
+      { path: commentsPath, content: serializeComments(request.comments), encoding: 'utf8' as const },
     ]
-    const unique = new Map(changes.map((change) => [change.path, change.content]))
+    const unique = new Map(changes.map((change) => [change.path, change]))
 
     const worktree = await mkdtemp(join(tmpdir(), 'marginalia-'))
     const notes: string[] = []
@@ -115,10 +138,14 @@ export class LocalGitProvider implements GitProvider {
       await run('git', ['worktree', 'add', '--detach', worktree, request.baseRef ?? 'HEAD'], root)
       await run('git', ['checkout', '-b', branch], worktree)
 
-      for (const [path, content] of unique) {
+      for (const [path, change] of unique) {
         const full = inside(worktree, path)
         await mkdir(dirname(full), { recursive: true })
-        await writeFile(full, content, 'utf8')
+        await writeFile(
+          full,
+          change.encoding === 'base64' ? Buffer.from(change.content, 'base64') : change.content,
+          change.encoding === 'base64' ? undefined : 'utf8',
+        )
       }
       await run('git', ['add', '--', ...unique.keys()], worktree)
       await run(

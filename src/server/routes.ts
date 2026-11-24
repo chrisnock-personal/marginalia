@@ -100,6 +100,24 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
     res.json({ path, content })
   })
 
+  router.get('/repos/:provider/:repo/asset', async (req, res) => {
+    const assetPath = typeof req.query.path === 'string' ? req.query.path : ''
+    if (!assetPath) throw new HttpError(400, 'path is required')
+    const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined
+    const provider = providerFor(req.params.provider, config, tokens)
+    let data: Buffer | null
+    try {
+      data = await provider.readAsset(req.params.repo, assetPath, ref)
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message)
+    }
+    if (!data) throw new HttpError(404, `Asset not found: ${assetPath}`)
+    const extension = assetPath.split('.').pop()?.toLowerCase() ?? ''
+    const mime = ASSET_TYPES[extension] ?? 'application/octet-stream'
+    res.setHeader('Cache-Control', 'no-store')
+    res.type(mime).send(data)
+  })
+
   router.post('/publish', async (req, res) => {
     const body = req.body as Partial<PublishRequest> | undefined
     if (
@@ -108,7 +126,12 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
       typeof body.branch !== 'string' ||
       typeof body.commitMessage !== 'string' ||
       !Array.isArray(body.files) ||
-      !body.files.every((f) => typeof f?.path === 'string' && typeof f?.content === 'string') ||
+      !body.files.every(
+        (f) =>
+          typeof f?.path === 'string' &&
+          typeof f?.content === 'string' &&
+          (f.encoding === undefined || f.encoding === 'utf8' || f.encoding === 'base64'),
+      ) ||
       !body.comments ||
       body.comments.version !== 1 ||
       !Array.isArray(body.comments.comments)
@@ -130,6 +153,18 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
   })
 
   return router
+}
+
+const ASSET_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
 }
 
 function defaultProvider(config: ServerConfig, tokens: TokenState): string {

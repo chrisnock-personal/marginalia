@@ -13,6 +13,8 @@ export interface GitProvider {
   listMarkdownFiles(repo: string, ref?: string): Promise<FileEntry[]>
   /** null when the file does not exist on that ref. */
   readFile(repo: string, path: string, ref?: string): Promise<string | null>
+  /** Binary asset (images) for rendering; null when absent. */
+  readAsset(repo: string, path: string, ref?: string): Promise<Buffer | null>
   /** Commit SHA at the tip of a ref, used for conflict detection. */
   headSha(repo: string, ref?: string): Promise<string>
   publish(request: PublishRequest): Promise<PublishResult>

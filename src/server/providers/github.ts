@@ -73,6 +73,19 @@ export class GitHubProvider implements GitProvider {
     return response.text()
   }
 
+  private async rawAsset(path: string): Promise<Buffer | null> {
+    const response = await this.fetchImpl(`https://api.github.com${path}`, {
+      headers: {
+        Accept: 'application/vnd.github.raw+json',
+        Authorization: `Bearer ${this.getToken()}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    })
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error(`GitHub ${path}: ${response.status}`)
+    return Buffer.from(await response.arrayBuffer())
+  }
+
   private static encoded(repo: string): string {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`Invalid repo id: ${repo}`)
     return repo.split('/').map(encodeURIComponent).join('/')
@@ -125,6 +138,13 @@ export class GitHubProvider implements GitProvider {
     )
   }
 
+  async readAsset(repo: string, path: string, ref?: string): Promise<Buffer | null> {
+    const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
+    return this.rawAsset(
+      `/repos/${GitHubProvider.encoded(repo)}/contents/${GitHubProvider.encodedPath(path)}${query}`,
+    )
+  }
+
   async headSha(repo: string, ref?: string): Promise<string> {
     const branch = ref ?? (await this.defaultBranch(repo))
     const result = await this.api<RefResponse>(
@@ -141,20 +161,27 @@ export class GitHubProvider implements GitProvider {
     const commentsPath = checkRelativePath(request.commentsPath ?? DEFAULT_COMMENTS_PATH)
     const changes = new Map(
       [
-        ...request.files.map((file) => [checkRelativePath(file.path), file.content] as const),
-        [commentsPath, serializeComments(request.comments)] as const,
-      ],
+        ...request.files.map((file) => ({
+          path: checkRelativePath(file.path),
+          content: file.content,
+          encoding: file.encoding ?? ('utf8' as const),
+        })),
+        { path: commentsPath, content: serializeComments(request.comments), encoding: 'utf8' as const },
+      ].map((change) => [change.path, change]),
     )
 
     const baseSha = await this.headSha(request.repo, baseRef)
     const commit = await this.api<CommitResponse>(`${base}/git/commits/${baseSha}`)
 
     const entries: Array<{ path: string; mode: string; type: string; sha: string }> = []
-    for (const [path, content] of changes) {
+    for (const [path, change] of changes) {
+      const content = change.encoding === 'base64'
+        ? change.content
+        : Buffer.from(change.content, 'utf8').toString('base64')
       const blob = await this.api<BlobResponse>(`${base}/git/blobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: Buffer.from(content, 'utf8').toString('base64'), encoding: 'base64' }),
+        body: JSON.stringify({ content, encoding: 'base64' }),
       })
       entries.push({ path, mode: '100644', type: 'blob', sha: blob.sha })
     }

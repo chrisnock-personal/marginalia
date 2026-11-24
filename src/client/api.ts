@@ -43,6 +43,12 @@ export const api = {
       `${repoPath(provider, repo)}/head${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`,
     ),
 
+  /** Browser URL for a repo-relative asset (images), used as an <img src>. */
+  assetSrc: (provider: ProviderId, repo: string, assetPath: string, ref?: string) =>
+    `/api${repoPath(provider, repo)}/asset?path=${encodeURIComponent(assetPath)}${
+      ref ? `&ref=${encodeURIComponent(ref)}` : ''
+    }`,
+
   files: (provider: ProviderId, repo: string) =>
     request<FileEntry[]>(`${repoPath(provider, repo)}/files`),
 
