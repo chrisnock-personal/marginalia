@@ -13,7 +13,7 @@ Returns the available sources and whether each is configured.
 {
   "providers": [
     { "id": "local", "label": "Local git repos", "configured": true, "detail": "2 repo(s) configured", "dryRun": false },
-    { "id": "github", "label": "GitHub (PAT)", "configured": true, "detail": "Authenticated as chrisnock" }
+    { "id": "github", "label": "GitHub (PAT)", "configured": true, "detail": "Authenticated as chrisnock", "oauthConfigured": true }
   ]
 }
 ```
@@ -33,6 +33,20 @@ Returns `{ "configured": true, "login": "chrisnock" }`. `401`/`422` errors indic
 Clear a UI-supplied token. Returns `{ "configured": boolean }` (still true if an env/file token is
 present).
 
+## `GET /auth/github/url`
+
+Requires `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Returns a GitHub authorize URL containing a
+single-use `state` value (valid for 10 minutes).
+
+```json
+{ "url": "https://github.com/login/oauth/authorize?client_id=…&state=…" }
+```
+
+## `GET /auth/github/callback?code=…&state=…`
+
+OAuth callback. Exchanges the code, validates the token, stores it server-side and redirects to
+`MARGINALIA_PUBLIC_URL/?auth=success` (or `?auth=error&message=…`).
+
 ## `GET /repos?provider=local|github`
 
 List repositories for that provider. Local entries use the directory name as `id`; GitHub entries
@@ -45,6 +59,14 @@ use `owner/name`.
 ```
 
 If `provider` is omitted, the first configured provider is used.
+
+## `GET /repos/:provider/:repo/head?ref=<optional>`
+
+Returns the commit SHA at the tip of `ref` (default branch/`HEAD`).
+
+```json
+{ "sha": "a1b2c3d..." }
+```
 
 ## `GET /repos/:provider/:repo/files?ref=<optional>`
 
@@ -67,6 +89,7 @@ Create a branch, commit and PR.
   "provider": "local",
   "repo": "articles",
   "baseRef": "main",
+  "baseSha": "a1b2c3d...",
   "branch": "marginalia/guide-m1abc",
   "commitMessage": "Edit guide.md",
   "files": [{ "path": "docs/guide.md", "content": "# Updated guide\n" }],
@@ -78,8 +101,10 @@ Create a branch, commit and PR.
 }
 ```
 
-`files` may be empty when only comments changed. `commentsPath` defaults to `comments.json`.
-`pr` is optional; without it the branch is pushed but no PR is opened.
+`files` may be empty when only comments changed. `baseSha` is optional; when supplied and different
+from the current head, the request fails with `409` and `{ "error": "Base branch changed …" }`.
+Replies in `comments` add `"parentId": "<root comment id>"`. `commentsPath` defaults to
+`comments.json`. `pr` is optional; without it the branch is pushed but no PR is opened.
 
 ```json
 {

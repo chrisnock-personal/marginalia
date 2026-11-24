@@ -38,6 +38,11 @@ export const api = {
 
   repos: (provider: ProviderId) => request<RepoSummary[]>(`/repos?provider=${provider}`),
 
+  head: (provider: ProviderId, repo: string, ref?: string) =>
+    request<{ sha: string }>(
+      `${repoPath(provider, repo)}/head${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`,
+    ),
+
   files: (provider: ProviderId, repo: string) =>
     request<FileEntry[]>(`${repoPath(provider, repo)}/files`),
 
@@ -66,4 +71,6 @@ export const api = {
     }),
 
   clearToken: () => request<{ configured: boolean }>('/token', { method: 'DELETE' }),
+
+  oauthUrl: () => request<{ url: string }>('/auth/github/url'),
 }

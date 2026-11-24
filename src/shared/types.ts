@@ -7,6 +7,7 @@ export interface ProviderInfo {
   label: string
   configured: boolean
   detail?: string
+  oauthConfigured?: boolean
 }
 
 export interface RepoSummary {
@@ -44,6 +45,8 @@ export interface Comment {
   author: string
   createdAt: string
   resolved: boolean
+  /** When set, this comment is a reply to another comment in the same file. */
+  parentId?: string
 }
 
 export interface CommentsFile {
@@ -60,6 +63,8 @@ export interface PublishRequest {
   provider: ProviderId
   repo: string
   baseRef?: string
+  /** Head SHA seen when the document was opened; publishing fails if it moved. */
+  baseSha?: string
   branch: string
   commitMessage: string
   files: FileChange[]

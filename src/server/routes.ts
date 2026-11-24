@@ -2,9 +2,11 @@ import express, { type Router } from 'express'
 import type { PublishRequest } from '../shared/types'
 import { HttpError, providerFor, type ServerConfig, type TokenState } from './config'
 import { GitHubProvider } from './providers/github'
+import { authorizeUrl, exchangeCode, OAuthState } from './oauth'
 
 export function createApiRouter(config: ServerConfig, tokens: TokenState): Router {
   const router = express.Router()
+  const oauthStates = new OAuthState()
 
   router.get('/config', (_req, res) => {
     res.json({
@@ -21,6 +23,7 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
           label: 'GitHub (PAT)',
           configured: tokens.configured,
           detail: tokens.user ? `Authenticated as ${tokens.user}` : undefined,
+          oauthConfigured: Boolean(config.oauth),
         },
       ],
     })
@@ -46,9 +49,39 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
     res.json({ configured: tokens.configured })
   })
 
+  router.get('/auth/github/url', (_req, res) => {
+    if (!config.oauth) throw new HttpError(400, 'GitHub OAuth is not configured')
+    res.json({ url: authorizeUrl(config.oauth, oauthStates.issue()) })
+  })
+
+  router.get('/auth/github/callback', async (req, res) => {
+    const code = typeof req.query.code === 'string' ? req.query.code : ''
+    const state = typeof req.query.state === 'string' ? req.query.state : ''
+    const fail = (message: string) =>
+      res.redirect(`${config.publicUrl}/?auth=error&message=${encodeURIComponent(message)}`)
+    if (!config.oauth || !code || !state || !oauthStates.consume(state)) {
+      fail('Invalid GitHub sign-in response')
+      return
+    }
+    try {
+      const token = await exchangeCode(config.oauth, code)
+      const user = await new GitHubProvider(() => token).whoAmI()
+      tokens.set(token, user.login)
+      res.redirect(`${config.publicUrl}/?auth=success`)
+    } catch (error) {
+      fail(`GitHub sign-in failed: ${(error as Error).message}`)
+    }
+  })
+
   router.get('/repos', async (req, res) => {
     const provider = providerFor(req.query.provider ?? defaultProvider(config, tokens), config, tokens)
     res.json(await provider.listRepos())
+  })
+
+  router.get('/repos/:provider/:repo/head', async (req, res) => {
+    const provider = providerFor(req.params.provider, config, tokens)
+    const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined
+    res.json({ sha: await provider.headSha(req.params.repo, ref) })
   })
 
   router.get('/repos/:provider/:repo/files', async (req, res) => {
@@ -82,7 +115,16 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
     ) {
       throw new HttpError(400, 'Invalid publish request')
     }
+    if (body.baseRef !== undefined && typeof body.baseRef !== 'string') {
+      throw new HttpError(400, 'Invalid baseRef')
+    }
     const provider = providerFor(body.provider, config, tokens)
+    if (body.baseSha && typeof body.baseSha === 'string') {
+      const current = await provider.headSha(body.repo, body.baseRef)
+      if (current !== body.baseSha) {
+        throw new HttpError(409, 'Base branch changed since you opened the file. Reload before publishing.')
+      }
+    }
     const result = await provider.publish(body as PublishRequest)
     res.json(result)
   })

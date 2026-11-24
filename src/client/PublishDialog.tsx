@@ -7,7 +7,9 @@ interface Props {
   comments: number
   busy: boolean
   error: string | null
+  conflict: boolean
   onClose: () => void
+  onReload: () => void
   onPublish: (values: { branch: string; commitMessage: string; title: string; body: string }) => void
 }
 
@@ -18,7 +20,9 @@ export default function PublishDialog({
   comments,
   busy,
   error,
+  conflict,
   onClose,
+  onReload,
   onPublish,
 }: Props) {
   const [branch, setBranch] = useState(initialBranch)
@@ -61,6 +65,12 @@ export default function PublishDialog({
             </ul>
           </div>
           {error && <p className="error">{error}</p>}
+          {conflict && (
+            <div className="conflict-hint">
+              <p>The base branch moved since you opened this file. Reload to review the latest version before publishing.</p>
+              <button type="button" onClick={onReload}>Reload file</button>
+            </div>
+          )}
           <div className="dialog-actions">
             <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
             <button type="submit" className="primary" disabled={busy}>

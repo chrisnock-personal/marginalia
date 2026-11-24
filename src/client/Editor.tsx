@@ -38,13 +38,13 @@ export default function Editor({ documentKey, markdown, comments, onChange, onAd
     }),
   })
 
-  // Reload the editor only when a different document is opened, not on every keystroke.
+  // Load a new document (or a reload after a conflict). Typing is a no-op here:
+  // the prop already equals what the editor produced in onUpdate.
   useEffect(() => {
-    if (editor && !editor.isDestroyed) {
+    if (editor && !editor.isDestroyed && editor.getMarkdown() !== markdown) {
       editor.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: false })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentKey, editor])
+  }, [documentKey, editor, markdown])
 
   useEffect(() => {
     setCommentHighlights(editor, comments)

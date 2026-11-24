@@ -29,6 +29,7 @@ test('local provider reads files and publishes a branch with comments.json', asy
 
     const provider = new LocalGitProvider(new Map([['test', repo]]))
     assert.equal((await provider.listRepos())[0]?.defaultBranch, 'main')
+    assert.equal(await provider.headSha('test', 'main'), git(['rev-parse', 'HEAD'], repo))
     assert.ok((await provider.listMarkdownFiles('test')).some((f) => f.path === 'docs/guide.md'))
     assert.match((await provider.readFile('test', 'docs/guide.md')) ?? '', /Original text/)
 

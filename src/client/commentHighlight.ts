@@ -27,7 +27,8 @@ export const CommentHighlight = Extension.create({
             const changed = tr.getMeta(SET_COMMENTS) as Comment[] | undefined
             const comments = changed ?? value.comments
             if (!tr.docChanged && !changed) return value
-            const marks = comments.flatMap((comment) => {
+            // Replies share their parent's anchor; only root comments get a highlight.
+            const marks = comments.filter((comment) => !comment.parentId).flatMap((comment) => {
               const range = resolveAnchor(tr.doc, comment.anchor)
               if (!range) return []
               return [

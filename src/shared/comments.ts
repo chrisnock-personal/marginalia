@@ -44,6 +44,9 @@ export function parseComments(raw: string): CommentsFile {
       ) {
         throw new Error(`comments.json comment #${index + 1} is invalid`)
       }
+      if (rawComment.parentId !== undefined && typeof rawComment.parentId !== 'string') {
+        throw new Error(`comments.json comment #${index + 1} has an invalid parentId`)
+      }
       return rawComment as Comment
     }),
   }

@@ -37,6 +37,7 @@ test('GitHub provider sends the PAT and builds a commit and PR', async () => {
   assert.deepEqual(await provider.whoAmI(), { login: 'tester' })
   assert.equal((await provider.listMarkdownFiles('o/r'))[0]?.path, 'docs/guide.md')
   assert.equal(await provider.readFile('o/r', 'docs/guide.md'), '# Guide')
+  assert.equal(await provider.headSha('o/r'), 'base-sha')
 
   const result = await provider.publish({
     provider: 'github',

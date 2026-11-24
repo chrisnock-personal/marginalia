@@ -4,10 +4,13 @@ import type { ProviderId } from '../shared/types'
 import { GitHubProvider } from './providers/github'
 import { localRootsFromEnv, LocalGitProvider } from './providers/local'
 import type { GitProvider } from './providers/types'
+import { oauthConfigFromEnv, type OAuthConfig } from './oauth'
 
 export interface ServerConfig {
   localRoots: Map<string, string>
   initialToken: string
+  oauth: OAuthConfig | null
+  publicUrl: string
   dryRun: boolean
   port: number
 }
@@ -23,6 +26,8 @@ export function loadConfig(): ServerConfig {
   return {
     localRoots: localRootsFromEnv(process.env.MARGINALIA_LOCAL_REPOS),
     initialToken: process.env.GITHUB_TOKEN?.trim() || fileToken,
+    oauth: oauthConfigFromEnv(),
+    publicUrl: (process.env.MARGINALIA_PUBLIC_URL ?? 'http://127.0.0.1:5173').replace(/\/$/, ''),
     dryRun: process.env.MARGINALIA_DRY_RUN === '1',
     port: Number(process.env.PORT ?? 5174),
   }

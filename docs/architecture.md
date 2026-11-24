@@ -21,9 +21,11 @@ no database and keeps no server-side copy of documents.
 
 ```
 provider + repo + file ──► GET file ──► Markdown ──► TipTap (Markdown extension)
-                        └─► GET comments.json ──► anchors ──► ProseMirror decorations
+                        ├─► GET comments.json ──► anchors ──► ProseMirror decorations
+                        └─► GET head ──► base SHA
 selection ──► CommentAnchor { quote, prefix, suffix, start, end } ──► comments.json in memory
-Publish ──► POST /publish { changed files, comments, branch, commit, PR } ──► git provider ──► branch + PR
+Publish ──► POST /publish { base SHA, files, comments, branch, commit, PR }
+        ──► conflict check ──► git provider ──► branch + PR
 ```
 
 ## Comment anchoring
@@ -42,9 +44,17 @@ context, then a plain quote search. A comment whose text was deleted stays in th
 becomes unhighlighted; it is not silently dropped from `comments.json`.
 
 `src/client/commentHighlight.ts` is a ProseMirror plugin that rebuilds inline decorations whenever
-the comment list or document changes.
+the comment list or document changes. Replies carry a `parentId` pointing at a root comment and
+reuse its anchor; only root comments are highlighted, and resolving or deleting a root applies to
+its replies.
 
 ## Publishing
+
+The client records the base ref's commit SHA when it opens a document and sends it with the publish
+request. The server compares it with the current head before writing anything; a mismatch returns
+`409 CONFLICT` and the UI offers to reload the file. This is deliberately conservative (any commit
+to the base branch triggers it) but prevents silently overwriting newer work. A three-way merge is
+future work.
 
 Both providers produce one branch and one commit containing the changed Markdown files and
 `comments.json` (always written, so removing the last comment is also publishable).
@@ -60,10 +70,17 @@ Both providers produce one branch and one commit containing the changed Markdown
 
 ## Auth
 
-GitHub access uses a PAT, not an OAuth app. A token can be pasted in the UI (`POST /api/token`,
-validated with `GET /user`), set via `GITHUB_TOKEN`, or read from `MARGINALIA_TOKEN_FILE`. UI tokens
-live only in server memory; env/file tokens are the fallback after a UI token. The browser never
-receives the token. A future multi-user deployment would need per-user sessions and OAuth instead.
+GitHub access supports both PAT and OAuth App sign-in.
+
+- PAT: pasted in the UI (`POST /api/token`, validated with `GET /user`), set via `GITHUB_TOKEN`, or
+  read from `MARGINALIA_TOKEN_FILE`.
+- OAuth: `GET /api/auth/github/url` issues a single-use state value (10-minute expiry) and returns
+  the GitHub authorize URL; the callback exchanges the code for a token, validates it with
+  `GET /user`, stores it server-side and redirects to the UI.
+
+UI/OAuth tokens live only in server memory; env/file tokens are the fallback. The browser never
+receives a token. This is still a single-user/single-identity model; a multi-user deployment would
+need per-user sessions and scoped tokens.
 
 ## Security notes
 
@@ -75,9 +92,9 @@ receives the token. A future multi-user deployment would need per-user sessions 
 
 ## Possible next steps
 
-- OAuth GitHub App and per-user sessions.
-- Diff/conflict detection against the current base ref before publishing.
-- Comment replies, notifications, and a filter for resolved comments.
+- Per-user sessions and scoped tokens for a multi-user deployment.
+- File-level three-way merges instead of branch-level conflict detection.
+- Notifications and a filter for resolved comments.
 - Multi-file editing with per-file comments in a shared `comments.json`.
 - Persisting drafts and comment anchors in a stable sidecar format based on markdown source offsets.
 - Rendering comment markers in the Markdown source view as well as in the WYSIWYG view.

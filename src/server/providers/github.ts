@@ -125,6 +125,14 @@ export class GitHubProvider implements GitProvider {
     )
   }
 
+  async headSha(repo: string, ref?: string): Promise<string> {
+    const branch = ref ?? (await this.defaultBranch(repo))
+    const result = await this.api<RefResponse>(
+      `/repos/${GitHubProvider.encoded(repo)}/git/ref/heads/${encodeURIComponent(branch)}`,
+    )
+    return result.object.sha
+  }
+
   async publish(request: PublishRequest): Promise<PublishResult> {
     const base = `/repos/${GitHubProvider.encoded(request.repo)}`
     const branch = checkBranch(request.branch)
@@ -138,8 +146,7 @@ export class GitHubProvider implements GitProvider {
       ],
     )
 
-    const baseCommit = await this.api<RefResponse>(`${base}/git/ref/heads/${encodeURIComponent(baseRef)}`)
-    const baseSha = baseCommit.object.sha
+    const baseSha = await this.headSha(request.repo, baseRef)
     const commit = await this.api<CommitResponse>(`${base}/git/commits/${baseSha}`)
 
     const entries: Array<{ path: string; mode: string; type: string; sha: string }> = []

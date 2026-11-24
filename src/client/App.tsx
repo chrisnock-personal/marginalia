@@ -26,11 +26,15 @@ export default function App() {
   const [markdown, setMarkdown] = useState('')
   const [comments, setComments] = useState(emptyComments().comments)
   const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null)
+  const [baseSha, setBaseSha] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
   const [loadingFile, setLoadingFile] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [publishOpen, setPublishOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
+  const [publishConflict, setPublishConflict] = useState(false)
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
   const [patOpen, setPatOpen] = useState(false)
   const [branch, setBranch] = useState('marginalia/edit')
@@ -49,6 +53,15 @@ export default function App() {
         if (first) setProvider(first.id)
       })
       .catch((err: Error) => setError(err.message))
+
+    const auth = new URLSearchParams(window.location.search).get('auth')
+    if (auth === 'success') {
+      setNotice('Signed in with GitHub')
+      refreshConfig().then(() => setProvider('github')).catch((err: Error) => setError(err.message))
+    } else if (auth === 'error') {
+      setError(`GitHub sign-in failed: ${new URLSearchParams(window.location.search).get('message') ?? 'unknown error'}`)
+    }
+    if (auth) window.history.replaceState({}, '', window.location.pathname)
   }, [])
 
   useEffect(() => {
@@ -80,18 +93,25 @@ export default function App() {
     setLoadingFile(true)
     setError(null)
     setPendingAnchor(null)
-    Promise.all([api.file(provider, repoId, path), api.comments(provider, repoId)])
-      .then(([file, loaded]) => {
+    const baseRef = repos.find((repo) => repo.id === repoId)?.defaultBranch
+    Promise.all([
+      api.file(provider, repoId, path),
+      api.comments(provider, repoId),
+      api.head(provider, repoId, baseRef),
+    ])
+      .then(([file, loaded, head]) => {
         if (cancelled) return
         setOriginal(file.content)
         setMarkdown(file.content)
         setComments(loaded.comments)
+        setBaseSha(head.sha)
         setPublishResult(null)
+        setNotice(null)
       })
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setLoadingFile(false) })
     return () => { cancelled = true }
-  }, [provider, repoId, path])
+  }, [provider, repoId, path, repos, reloadKey])
 
   const selectRepo = (id: string) => {
     setRepoId(id)
@@ -103,6 +123,7 @@ export default function App() {
     const slug = path.split('/').pop()?.replace(/\.(md|markdown)$/i, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase() ?? 'edit'
     setBranch(`marginalia/${slug}-${Date.now().toString(36)}`)
     setPublishError(null)
+    setPublishConflict(false)
     setPublishOpen(true)
   }
 
@@ -114,6 +135,7 @@ export default function App() {
         provider,
         repo: repoId,
         baseRef: repos.find((repo) => repo.id === repoId)?.defaultBranch,
+        baseSha,
         branch: values.branch,
         commitMessage: values.commitMessage,
         files: markdown === original ? [] : [{ path, content: markdown }],
@@ -123,27 +145,51 @@ export default function App() {
       setPublishResult(result)
       setPublishOpen(false)
     } catch (err) {
-      setPublishError((err as Error).message)
+      const message = (err as Error).message
+      setPublishError(message)
+      setPublishConflict(message.startsWith('Base branch changed'))
     } finally {
       setPublishing(false)
     }
   }
 
-  const saveComment = (body: string, author: string) => {
-    if (!pendingAnchor || !path) return
+  const saveComment = (body: string, author: string, parentId?: string) => {
+    const anchor = parentId
+      ? comments.find((comment) => comment.id === parentId)?.anchor
+      : pendingAnchor
+    if (!anchor || !path) return
     setComments([
       ...comments,
       {
         id: newCommentId(),
         path,
-        anchor: pendingAnchor,
+        anchor,
+        parentId,
         body,
         author,
         createdAt: new Date().toISOString(),
         resolved: false,
       },
     ])
-    setPendingAnchor(null)
+    if (!parentId) setPendingAnchor(null)
+  }
+
+  const toggleResolved = (id: string) => {
+    const target = comments.find((comment) => comment.id === id)
+    if (!target) return
+    const resolved = !target.resolved
+    setComments(comments.map((comment) =>
+      comment.id === id || comment.parentId === id ? { ...comment, resolved } : comment,
+    ))
+  }
+
+  const deleteComment = (id: string) => {
+    setComments(comments.filter((comment) => comment.id !== id && comment.parentId !== id))
+  }
+
+  const reloadFile = () => {
+    setPublishOpen(false)
+    setReloadKey((key) => key + 1)
   }
 
   const github = config.find((p) => p.id === 'github')
@@ -169,16 +215,17 @@ export default function App() {
             ))}
           </select>
           <button type="button" onClick={() => setPatOpen(true)}>
-            GitHub PAT{github?.detail ? ` · ${github.detail}` : ''}
+            GitHub sign-in{github?.detail ? ` · ${github.detail}` : ''}
           </button>
         </div>
       </header>
 
       {error && <div className="banner error-banner">{error}</div>}
+      {notice && <div className="banner success-banner">{notice}</div>}
       {!anyConfigured && (
         <div className="banner setup-banner">
           No git source configured. Set <code>MARGINALIA_LOCAL_REPOS</code> to colon-separated repo
-          paths, or connect with a GitHub PAT below.
+          paths, or connect with GitHub below.
         </div>
       )}
 
@@ -227,7 +274,7 @@ export default function App() {
                 </div>
               )}
               <Editor
-                documentKey={`${provider}/${repoId}/${path}`}
+                documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
                 markdown={markdown}
                 comments={comments}
                 onChange={setMarkdown}
@@ -251,8 +298,8 @@ export default function App() {
           pendingAnchor={pendingAnchor}
           onSave={saveComment}
           onCancel={() => setPendingAnchor(null)}
-          onToggleResolved={(id) => setComments(comments.map((c) => c.id === id ? { ...c, resolved: !c.resolved } : c))}
-          onDelete={(id) => setComments(comments.filter((c) => c.id !== id))}
+          onToggleResolved={toggleResolved}
+          onDelete={deleteComment}
         />
       </div>
 
@@ -264,14 +311,21 @@ export default function App() {
           comments={comments.length}
           busy={publishing}
           error={publishError}
+          conflict={publishConflict}
           onClose={() => setPublishOpen(false)}
+          onReload={reloadFile}
           onPublish={doPublish}
         />
       )}
       {patOpen && (
         <PatDialog
           login={github?.detail?.replace('Authenticated as ', '') ?? null}
+          oauthConfigured={Boolean(github?.oauthConfigured)}
           onClose={() => setPatOpen(false)}
+          onOAuth={async () => {
+            const { url } = await api.oauthUrl()
+            window.location.href = url
+          }}
           onSave={async (token) => { await api.setToken(token); await refreshConfig(); setProvider('github') }}
           onClear={async () => {
             await api.clearToken()

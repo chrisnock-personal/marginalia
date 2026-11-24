@@ -90,6 +90,14 @@ export class LocalGitProvider implements GitProvider {
     return readFile(full, 'utf8')
   }
 
+  async headSha(repo: string, ref?: string): Promise<string> {
+    return run(
+      'git',
+      ['rev-parse', '--verify', '--end-of-options', `${ref ?? 'HEAD'}^{commit}`],
+      this.repoPath(repo),
+    )
+  }
+
   async publish(request: PublishRequest): Promise<PublishResult> {
     const root = this.repoPath(request.repo)
     const branch = checkBranch(request.branch)
