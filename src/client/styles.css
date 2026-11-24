@@ -1,0 +1,113 @@
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1f2430;
+  background: #f6f7fa;
+  font-size: 14px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+.app-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px; background: #fff; border-bottom: 1px solid #dfe3ea;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo {
+  display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+  background: #3457d5; color: white; font-weight: 700; font-size: 20px;
+}
+.brand h1 { font-size: 17px; margin: 0; }
+.brand p { margin: 2px 0 0; color: #737b8c; font-size: 12px; }
+.header-actions { display: flex; gap: 8px; }
+.header-actions select, .file-sidebar select {
+  padding: 7px 10px; border: 1px solid #d5dae3; border-radius: 7px; background: white;
+}
+.header-actions button, .dialog button, .composer button {
+  padding: 7px 11px; border: 1px solid #d5dae3; border-radius: 7px; background: white;
+}
+button.primary { background: #3457d5; color: white; border-color: #3457d5; }
+
+.banner { padding: 9px 18px; font-size: 13px; }
+.error-banner, .error { color: #a02032; background: #fff0f1; }
+.success-banner { color: #17613f; background: #eafaf0; }
+.setup-banner { color: #7a5610; background: #fff8e6; }
+
+.workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr) 310px; flex: 1; min-height: 0; }
+
+.file-sidebar {
+  border-right: 1px solid #e2e5ec; background: #fff; padding: 16px 12px; overflow-y: auto;
+}
+.file-sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #7a8396; margin: 4px 4px 8px; }
+.file-sidebar select { width: 100%; margin-bottom: 18px; }
+.file-list { list-style: none; margin: 0; padding: 0; }
+.file button {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent;
+  padding: 7px 9px; border-radius: 6px; color: #35405a;
+}
+.file button:hover { background: #f0f3fa; }
+.file button.active { background: #e6ecff; color: #2440a8; font-weight: 600; }
+
+.main-pane { overflow-y: auto; padding: 20px 26px; background: #fff; }
+.doc-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.doc-header h2 { margin: 0 0 4px; font-size: 17px; }
+.muted { color: #7a8396; font-size: 12px; }
+.placeholder { max-width: 520px; margin: 18vh auto; text-align: center; color: #687287; }
+.placeholder h2 { color: #333c50; }
+
+.editor-shell { border: 1px solid #e2e5ec; border-radius: 10px; overflow: hidden; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 8px; background: #fafbfd; border-bottom: 1px solid #e8ebf1; }
+.tool { min-width: 30px; padding: 5px 8px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #4c5568; }
+.tool:hover { background: #eef1f8; }
+.tool-active { background: #e3e9ff; color: #2440a8; border-color: #cbd5ff; }
+.tool-comment { color: #2440a8; border-color: #cbd5ff; }
+.toolbar-divider { width: 1px; height: 20px; background: #dfe3ea; margin: 0 4px; }
+.editor-content { padding: 20px 26px; min-height: 420px; line-height: 1.65; }
+.editor-content .ProseMirror { outline: none; min-height: 400px; }
+.editor-content h1, .editor-content h2, .editor-content h3 { line-height: 1.3; }
+.editor-content pre { background: #1e2431; color: #e8ecf5; padding: 14px; border-radius: 8px; overflow-x: auto; }
+.editor-content code { background: #f1f3f8; padding: 1px 4px; border-radius: 4px; }
+.editor-content pre code { background: transparent; padding: 0; }
+.editor-content blockquote { border-left: 3px solid #c7d0e6; margin-left: 0; padding-left: 14px; color: #5d6578; }
+.comment-mark { background: #fff2b8; border-bottom: 2px solid #e0b91c; cursor: pointer; }
+.comment-mark.resolved { background: #e9f4ec; border-bottom-color: #8bbf9e; }
+
+.comments-panel { border-left: 1px solid #e2e5ec; background: #fafbfd; overflow-y: auto; padding: 16px; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; }
+.panel-header h2 { font-size: 15px; margin: 0 0 12px; }
+.count { background: #e6ecff; color: #2440a8; border-radius: 12px; padding: 2px 8px; font-size: 12px; }
+.empty-hint { color: #8b93a3; font-size: 13px; line-height: 1.5; }
+.composer { background: #fff; border: 1px solid #cbd5ff; border-radius: 9px; padding: 10px; margin-bottom: 14px; }
+.composer-quote { border-left: 3px solid #e0b91c; padding: 4px 8px; margin-bottom: 8px; font-size: 12px; color: #6b7285; }
+.composer textarea, .composer input, .dialog textarea, .dialog input {
+  width: 100%; border: 1px solid #d5dae3; border-radius: 6px; padding: 8px; margin-bottom: 8px; background: white;
+}
+.composer-actions, .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.comment-list { display: flex; flex-direction: column; gap: 10px; }
+.comment { background: #fff; border: 1px solid #e2e5ec; border-radius: 9px; padding: 11px; }
+.comment.resolved { opacity: .65; }
+.comment blockquote { margin: 0 0 8px; padding-left: 8px; border-left: 3px solid #e0b91c; font-size: 12px; color: #687287; }
+.comment-body { margin: 0 0 8px; white-space: pre-wrap; }
+.comment-meta { display: flex; justify-content: space-between; font-size: 11px; color: #8b93a3; }
+.comment-actions { display: flex; gap: 6px; margin-top: 8px; }
+.comment-actions button { border: 0; background: transparent; color: #3457d5; font-size: 12px; padding: 2px; }
+
+.overlay { position: fixed; inset: 0; background: rgb(20 26 40 / 45%); display: grid; place-items: center; z-index: 20; }
+.dialog { width: min(520px, 92vw); max-height: 90vh; overflow-y: auto; background: #fff; border-radius: 12px; padding: 22px; box-shadow: 0 20px 60px rgb(0 0 0 / 25%); }
+.dialog h2 { margin: 0 0 6px; font-size: 18px; }
+.dialog form { display: flex; flex-direction: column; }
+.dialog label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 10px; color: #4c5568; }
+.dialog input, .dialog textarea { margin-top: 4px; font-weight: normal; }
+.changes { background: #f6f7fa; padding: 10px 12px; border-radius: 7px; font-size: 12px; margin-bottom: 14px; }
+.changes ul { margin: 6px 0 0; padding-left: 18px; }
+
+@media (max-width: 1000px) {
+  .workspace { grid-template-columns: 180px minmax(0, 1fr); }
+  .comments-panel { grid-column: 1 / -1; max-height: 320px; border-left: 0; border-top: 1px solid #e2e5ec; }
+}
