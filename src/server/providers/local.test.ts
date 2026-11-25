@@ -159,7 +159,7 @@ test('local provider uses commits pushed to origin while the checkout is behind'
     // The client reads the page at the head SHA (and listings by branch name),
     // so it edits the upstream text, not the stale checkout.
     const loaded = await provider.readFile('test', 'guide.md', remoteSha)
-    assert.match(loaded ?? '', /Pushed from another clone/)
+    assert.equal(loaded, '# Guide\n\nPushed from another clone.\n', 'reading at a commit keeps the exact bytes, final newline included')
     assert.match(await provider.readFile('test', 'guide.md', 'main') ?? '', /Pushed from another clone/)
     assert.equal(await provider.readFile('test', 'guide.md'), '# Guide\n', 'no ref still reads the working tree')
 

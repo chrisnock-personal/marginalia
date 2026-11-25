@@ -147,7 +147,14 @@ export class LocalGitProvider implements GitProvider {
     const root = this.repoPath(repo)
     if (ref) {
       try {
-        return await run('git', ['show', `${await this.readRef(root, ref)}:${checkRelativePath(path)}`], root)
+        // Not `run`: it trims stdout, which would drop the file's final
+        // newline and make every publish rewrite the last line.
+        const { stdout } = await execFileAsync(
+          'git',
+          ['show', `${await this.readRef(root, ref)}:${checkRelativePath(path)}`],
+          { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+        )
+        return stdout
       } catch {
         return null
       }
