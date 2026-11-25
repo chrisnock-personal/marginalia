@@ -489,6 +489,7 @@ export default function App() {
                 documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
                 docPath={path}
                 markdown={markdown}
+                sourceMarkdown={original}
                 comments={comments}
                 resolveSrc={resolveSrc}
                 onAsset={stageAsset}
