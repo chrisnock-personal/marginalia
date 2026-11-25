@@ -84,7 +84,7 @@ export default function PublishDialog({
               ))}
             </ul>
           </div>
-          {error && <p className="error">{error}</p>}
+          {error && !conflict && <p className="error">{error}</p>}
           {conflict && (
             <div className="conflict-hint">
               <p>The base branch moved since you opened this file. Reload to review the latest version before publishing.</p>
