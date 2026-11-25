@@ -17,6 +17,7 @@
     "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
+    "@fontsource-variable/source-serif-4": "^5.3.1",
     "@tiptap/extension-image": "^3.35.0",
     "@tiptap/extension-table": "^3.35.0",
     "@tiptap/markdown": "^3.35.0",

@@ -18,12 +18,41 @@ import AssetDialog, { type AssetView } from './AssetDialog'
 import { relativeSrcFor, repoPathFor, rewriteReferences } from './assetPaths'
 import CommentsPanel from './CommentsPanel'
 import Editor from './Editor'
+import Logo from './Logo'
 import { buildExportHtml, downloadHtml, inlineImageSources, printHtml, resolveExportImageSource } from './export'
 import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
 import { previewToSrc, setImagePreview } from './repoImage'
 import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
+
+interface Panels { files: boolean; comments: boolean }
+const PANELS_KEY = 'marginalia.panels'
+
+function loadPanels(): Panels {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PANELS_KEY) ?? '{}') as Partial<Panels>
+    return { files: saved.files ?? true, comments: saved.comments ?? true }
+  } catch {
+    return { files: true, comments: true }
+  }
+}
+
+/** Close the <details> menu a button sits in. */
+function closeMenu(event: { currentTarget: HTMLElement }) {
+  event.currentTarget.closest('details')?.removeAttribute('open')
+}
+
+/** Group files by folder, root files first, both alphabetical. */
+function groupByFolder(files: FileEntry[]): Array<[string, FileEntry[]]> {
+  const groups = new Map<string, FileEntry[]>()
+  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    const slash = file.path.lastIndexOf('/')
+    const folder = slash >= 0 ? file.path.slice(0, slash) : ''
+    groups.set(folder, [...(groups.get(folder) ?? []), file])
+  }
+  return [...groups].sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)))
+}
 
 export default function App() {
   const [config, setConfig] = useState<ProviderInfo[]>([])
@@ -54,6 +83,22 @@ export default function App() {
   const [publishConflict, setPublishConflict] = useState(false)
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
   const [patOpen, setPatOpen] = useState(false)
+  // Side panels can be hidden so only the writing column remains; the choice
+  // is remembered per browser.
+  const [panels, setPanels] = useState(loadPanels)
+  // On phones the file list steps aside once a file is opened.
+  const [narrowHidden, setNarrowHidden] = useState(false)
+  const togglePanel = (panel: keyof Panels) => {
+    if (panel === 'files' && narrowHidden) {
+      setNarrowHidden(false)
+      if (panels.files) return
+    }
+    setPanels((current) => {
+      const next = { ...current, [panel]: !current[panel] }
+      try { localStorage.setItem(PANELS_KEY, JSON.stringify(next)) } catch { /* storage unavailable */ }
+      return next
+    })
+  }
   const [assetOpen, setAssetOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [branch, setBranch] = useState('marginalia/edit')
@@ -417,96 +462,158 @@ export default function App() {
     deleted: assets.some((asset) => asset.path === assetPath && asset.delete),
   }))
 
+  const docComments = comments.filter((comment) => comment.path === path)
+  const changedFiles = publishFileRows.filter((row) => row.status !== 'comments').length
+  const fileGroups = groupByFolder(files)
+  const slash = path.lastIndexOf('/')
+
+  const filesOpen = panels.files && !narrowHidden
+  const commentsOpen = Boolean(path) && panels.comments
+  const statusText = dirty
+    ? `${changedFiles} ${changedFiles === 1 ? 'file' : 'files'} changed`
+    : 'No edits'
+
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="brand">
-          <span className="logo">M</span>
-          <div>
-            <h1>Marginalia</h1>
-            <p>Markdown editing with margin notes and PR publishing</p>
-          </div>
-        </div>
-        <div className="header-actions">
-          <select value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)}>
-            {config.map((info) => (
-              <option key={info.id} value={info.id} disabled={!info.configured}>
-                {info.label}{info.configured ? '' : ' (not connected)'}
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={() => setPatOpen(true)}>
-            GitHub sign-in{github?.detail ? ` · ${github.detail}` : ''}
+      <header className="topbar">
+        <div className="topbar-left">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={filesOpen ? 'Hide files' : 'Show files'}
+            aria-pressed={filesOpen}
+            aria-controls="files-panel"
+            onClick={() => togglePanel('files')}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+              <line x1="6" y1="2.5" x2="6" y2="13.5" />
+            </svg>
           </button>
+          {path && (
+            <div className="doc-title">
+              <h1>
+                {slash >= 0 && <span className="doc-folder">{path.slice(0, slash + 1)}</span>}
+                {path.slice(slash + 1)}
+              </h1>
+              <span className={dirty ? 'doc-status dirty' : 'doc-status'}>{statusText}</span>
+            </div>
+          )}
+        </div>
+
+        <Logo />
+
+        <div className="topbar-right">
+          {path && (
+            <>
+              <button type="button" className="bar-button wide-only" onClick={() => setExportOpen(true)}>Export</button>
+              <button type="button" className="bar-button wide-only" onClick={() => setAssetOpen(true)}>
+                Images{assetViews.length > 0 && <span className="bar-count">{assetViews.length}</span>}
+              </button>
+              <button
+                type="button"
+                className="bar-button wide-only"
+                aria-pressed={commentsOpen}
+                aria-controls="comments-panel"
+                onClick={() => togglePanel('comments')}
+              >
+                Comments{docComments.length > 0 && <span className="bar-count">{docComments.length}</span>}
+              </button>
+              <details className="more narrow-only">
+                <summary aria-label="More actions">
+                  <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" />
+                  </svg>
+                </summary>
+                <div className="more-menu">
+                  <button type="button" onClick={(e) => { closeMenu(e); setExportOpen(true) }}>Export</button>
+                  <button type="button" onClick={(e) => { closeMenu(e); setAssetOpen(true) }}>Images ({assetViews.length})</button>
+                  <button type="button" onClick={(e) => { closeMenu(e); togglePanel('comments') }}>
+                    {commentsOpen ? 'Hide comments' : `Show comments (${docComments.length})`}
+                  </button>
+                </div>
+              </details>
+              <button type="button" className="primary" onClick={openPublish}>Publish</button>
+            </>
+          )}
         </div>
       </header>
 
-      {error && <div className="banner error-banner">{error}</div>}
-      {notice && (
-        <div className={notice.startsWith('Staged') ? 'banner info-banner' : 'banner success-banner'}>
-          {notice}
+      {error && <div className="banner error-banner" role="alert">{error}</div>}
+      {notice && <div className="banner" role="status">{notice}</div>}
+      {publishResult && (
+        <div className="banner success-banner" role="status">
+          Published branch <code>{publishResult.branch}</code>.
+          {publishResult.prUrl && <> <a href={publishResult.prUrl} target="_blank" rel="noreferrer">Open the pull request</a>.</>}
+          {publishResult.notes.map((note) => <span key={note}> {note}.</span>)}
         </div>
       )}
       {!anyConfigured && (
-        <div className="banner setup-banner">
+        <div className="banner">
           No git source configured. Set <code>MARGINALIA_LOCAL_REPOS</code> to colon-separated repo
-          paths, or connect with GitHub below.
+          paths, or connect GitHub from the file panel.
         </div>
       )}
 
       <div className="workspace">
-        <nav className="file-sidebar">
-          <h2>Repository</h2>
-          <select value={repoId} onChange={(e) => selectRepo(e.target.value)} disabled={!anyConfigured}>
-            <option value="">Choose a repo…</option>
-            {repos.map((repo) => (
-              <option key={repo.id} value={repo.id}>{repo.fullName}</option>
-            ))}
-          </select>
-          <h2>Markdown files</h2>
-          <ul className="file-list">
-            {files.map((file) => (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  className={file.path === path ? 'file active' : 'file'}
-                  onClick={() => { setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null) }}
-                >
-                  {file.path.split('/').pop()}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {repoId && files.length === 0 && <p className="empty-hint">No Markdown files found.</p>}
-        </nav>
+        {filesOpen && (
+          <nav id="files-panel" className="files-panel" aria-label="Files">
+            <div className="source">
+              <select aria-label="Source" value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)}>
+                {config.map((info) => (
+                  <option key={info.id} value={info.id} disabled={!info.configured}>
+                    {info.label}{info.configured ? '' : ' (not connected)'}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Repository"
+                className="repo-select"
+                value={repoId}
+                onChange={(e) => selectRepo(e.target.value)}
+                disabled={!anyConfigured}
+              >
+                <option value="">Choose a repository…</option>
+                {repos.map((repo) => (
+                  <option key={repo.id} value={repo.id}>{repo.fullName}</option>
+                ))}
+              </select>
+            </div>
+            <div className="file-tree">
+              {repoId && files.length === 0 && <p className="hint">No Markdown files in this repository.</p>}
+              {fileGroups.map(([folder, entries]) => (
+                <div key={folder} className="file-group">
+                  {folder && <h2 className="folder">{folder}</h2>}
+                  <ul className="file-list">
+                    {entries.map((file) => (
+                      <li key={file.path}>
+                        <button
+                          type="button"
+                          className={file.path === path ? 'file active' : 'file'}
+                          aria-current={file.path === path ? 'page' : undefined}
+                          onClick={() => {
+                            setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null)
+                            if (window.matchMedia('(max-width: 760px)').matches) setNarrowHidden(true)
+                          }}
+                        >
+                          {file.path.split('/').pop()}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="bar-button signin" onClick={() => setPatOpen(true)}>
+              {github?.detail ? github.detail.replace('Authenticated as ', 'GitHub: ') : 'Connect GitHub'}
+            </button>
+          </nav>
+        )}
 
-        <main className="main-pane">
+        <main className="writing">
           {path ? (
             <>
-              <div className="doc-header">
-                <div>
-                  <h2>{path}</h2>
-                  <span className="muted">
-                    {dirty ? 'Unpublished edits' : 'No local edits'} · {comments.filter((c) => c.path === path).length} comment(s)
-                    {assets.length > 0 && ` · ${assets.length} file change(s) staged`}
-                  </span>
-                </div>
-                <div className="doc-actions">
-                  <button type="button" onClick={() => setExportOpen(true)}>Export</button>
-                  <button type="button" onClick={() => setAssetOpen(true)}>
-                    Assets ({assetViews.length})
-                  </button>
-                  <button type="button" className="primary" onClick={openPublish}>Publish PR</button>
-                </div>
-              </div>
-              {loadingFile && <p className="muted">Loading document…</p>}
-              {publishResult && (
-                <div className="banner success-banner">
-                  Published branch <code>{publishResult.branch}</code>
-                  {publishResult.prUrl && <> · <a href={publishResult.prUrl} target="_blank" rel="noreferrer">Open PR</a></>}
-                  {publishResult.notes.map((note) => <span key={note}> · {note}</span>)}
-                </div>
-              )}
+              {loadingFile && <p className="hint loading">Loading…</p>}
               <Editor
                 documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
                 docPath={path}
@@ -519,28 +626,41 @@ export default function App() {
                 onEditorReady={(instance) => { editorRef.current = instance }}
                 onAddComment={(anchor, target) => {
                   if (!anchor && !target) setError('Select some text or click an image before adding a comment')
-                  else { setError(null); setPendingAnchor(anchor); setPendingTarget(target ?? null) }
+                  else {
+                    setError(null); setPendingAnchor(anchor); setPendingTarget(target ?? null)
+                    if (!panels.comments) togglePanel('comments')
+                  }
                 }}
               />
             </>
           ) : (
-            <div className="placeholder">
-              <h2>Review and edit Markdown in context</h2>
-              <p>Choose a repository and a file. Select text or click an image to leave a comment, then publish the edits and comments as a pull request.</p>
+            <div className="empty">
+              <p>
+                {repoId
+                  ? 'Open a file to start writing.'
+                  : anyConfigured
+                    ? 'Choose a repository, then open a file to start writing.'
+                    : 'Connect a git source to start writing.'}
+              </p>
+              {!filesOpen && (
+                <button type="button" className="bar-button" onClick={() => togglePanel('files')}>Show files</button>
+              )}
             </div>
           )}
         </main>
 
-        <CommentsPanel
-          path={path || null}
-          comments={comments}
-          pendingAnchor={pendingAnchor}
-          pendingTarget={pendingTarget}
-          onSave={saveComment}
-          onCancel={() => { setPendingAnchor(null); setPendingTarget(null) }}
-          onToggleResolved={toggleResolved}
-          onDelete={deleteComment}
-        />
+        {commentsOpen && (
+          <CommentsPanel
+            path={path}
+            comments={comments}
+            pendingAnchor={pendingAnchor}
+            pendingTarget={pendingTarget}
+            onSave={saveComment}
+            onCancel={() => { setPendingAnchor(null); setPendingTarget(null) }}
+            onToggleResolved={toggleResolved}
+            onDelete={deleteComment}
+          />
+        )}
       </div>
 
       {publishOpen && (
@@ -568,7 +688,7 @@ export default function App() {
       {exportOpen && (
         <ExportDialog
           title={path}
-          commentCount={comments.filter((comment) => comment.path === path).length}
+          commentCount={docComments.length}
           onClose={() => setExportOpen(false)}
           onPrint={(includeComments) => {
             try {

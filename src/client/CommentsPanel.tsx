@@ -12,6 +12,19 @@ interface Props {
   onDelete: (id: string) => void
 }
 
+/** Short, readable timestamp: "20 Nov, 09:14", with the year only when it differs. */
+function formatWhen(iso: string): string {
+  const date = new Date(iso)
+  const sameYear = date.getFullYear() === new Date().getFullYear()
+  return date.toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 export default function CommentsPanel({
   path,
   comments,
@@ -48,19 +61,15 @@ export default function CommentsPanel({
   }
 
   const targetLabel = (comment: Comment) =>
-    comment.target?.type === 'image' ? `🖼 ${comment.target.path}` : comment.anchor?.quote
+    comment.target?.type === 'image' ? `Image: ${comment.target.path}` : `“${comment.anchor?.quote ?? ''}”`
 
   return (
-    <aside className="comments-panel">
-      <header className="panel-header">
-        <h2>Comments</h2>
-        <span className="count">{visible.length}</span>
-      </header>
+    <aside id="comments-panel" className="comments-panel" aria-label="Comments">
 
       {(pendingAnchor || pendingTarget) && (
         <div className="composer">
           <div className="composer-quote">
-            {pendingTarget ? `🖼 ${pendingTarget.path}` : `“${pendingAnchor?.quote}”`}
+            {pendingTarget ? `Image: ${pendingTarget.path}` : `“${pendingAnchor?.quote ?? ''}”`}
           </div>
           <textarea
             autoFocus
@@ -68,7 +77,10 @@ export default function CommentsPanel({
             placeholder="Write an inline comment…"
             onChange={(event) => setBody(event.target.value)}
           />
-          <input value={author} aria-label="Author" onChange={(event) => setAuthor(event.target.value)} />
+          <label className="author-field">
+            <span>Your name</span>
+            <input value={author} onChange={(event) => setAuthor(event.target.value)} />
+          </label>
           <div className="composer-actions">
             <button type="button" className="primary" onClick={save} disabled={!body.trim()}>
               Add comment
@@ -80,7 +92,7 @@ export default function CommentsPanel({
 
       <div className="comment-list">
         {roots.length === 0 && !pendingAnchor && !pendingTarget && (
-          <p className="empty-hint">Select text or click an image, then use “+ Comment”.</p>
+          <p className="empty-hint">No comments on this page yet. Select text or click an image, then choose Comment.</p>
         )}
         {roots.map((comment) => (
           <article key={comment.id} className={comment.resolved ? 'comment resolved' : 'comment'}>
@@ -89,8 +101,9 @@ export default function CommentsPanel({
             </blockquote>
             <p className="comment-body">{comment.body}</p>
             <div className="comment-meta">
-              <span>{comment.author}</span>
-              <span>{new Date(comment.createdAt).toLocaleString()}</span>
+              <span className="author">{comment.author}</span>
+              <time dateTime={comment.createdAt}>{formatWhen(comment.createdAt)}</time>
+              {comment.resolved && <span className="resolved-tag">Resolved</span>}
             </div>
             <div className="comment-actions">
               <button type="button" onClick={() => { setReplyTo(comment.id); setReplyBody('') }}>Reply</button>
@@ -106,8 +119,8 @@ export default function CommentsPanel({
                   <div key={reply.id} className="reply">
                     <p className="comment-body">{reply.body}</p>
                     <div className="comment-meta">
-                      <span>{reply.author}</span>
-                      <span>{new Date(reply.createdAt).toLocaleString()}</span>
+                      <span className="author">{reply.author}</span>
+                      <time dateTime={reply.createdAt}>{formatWhen(reply.createdAt)}</time>
                     </div>
                     <div className="comment-actions">
                       <button type="button" onClick={() => { setReplyTo(comment.id); setReplyBody('') }}>Reply</button>

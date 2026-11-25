@@ -117,12 +117,14 @@ export default function Editor({
 
   if (!editor) return null
 
-  const tool = (label: string, action: () => void, active = false, title?: string) => (
+  const tool = (label: string, action: () => void, active = false, title?: string, extra = '') => (
     <button
       type="button"
-      className={active ? 'tool tool-active' : 'tool'}
+      className={['tool', active && 'tool-active', extra].filter(Boolean).join(' ')}
       onClick={action}
       title={title ?? label}
+      aria-label={title ?? label}
+      aria-pressed={active || undefined}
     >
       {label}
     </button>
@@ -191,17 +193,17 @@ export default function Editor({
   return (
     <div className="editor-shell">
       <div className="toolbar">
-        {tool('B', () => editor.chain().focus().toggleBold().run(), state?.bold, 'Bold')}
-        {tool('I', () => editor.chain().focus().toggleItalic().run(), state?.italic, 'Italic')}
-        {tool('H2', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), state?.heading, 'Heading 2')}
-        {tool('• list', () => editor.chain().focus().toggleBulletList().run(), state?.bullet, 'Bullet list')}
-        {tool('1. list', () => editor.chain().focus().toggleOrderedList().run(), state?.ordered, 'Ordered list')}
-        {tool('quote', () => editor.chain().focus().toggleBlockquote().run(), state?.quote, 'Quote')}
-        {tool('code', () => editor.chain().focus().toggleCodeBlock().run(), state?.codeBlock, 'Code block')}
+        {tool('B', () => editor.chain().focus().toggleBold().run(), state?.bold, 'Bold', 'tool-bold')}
+        {tool('I', () => editor.chain().focus().toggleItalic().run(), state?.italic, 'Italic', 'tool-italic')}
+        {tool('Heading', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), state?.heading, 'Heading 2')}
+        {tool('List', () => editor.chain().focus().toggleBulletList().run(), state?.bullet, 'Bullet list')}
+        {tool('Numbers', () => editor.chain().focus().toggleOrderedList().run(), state?.ordered, 'Ordered list')}
+        {tool('Quote', () => editor.chain().focus().toggleBlockquote().run(), state?.quote, 'Quote')}
+        {tool('Code', () => editor.chain().focus().toggleCodeBlock().run(), state?.codeBlock, 'Code block')}
         <span className="toolbar-divider" />
-        {tool('table', () => editor.chain().focus().insertTable({ rows: 3, cols: 3 }).run(), state?.table, 'Insert table')}
-        {tool('image', insertImageUrl, false, 'Insert image by URL')}
-        {tool('upload', () => fileInput.current?.click(), false, 'Upload images from your computer')}
+        {tool('Table', () => editor.chain().focus().insertTable({ rows: 3, cols: 3 }).run(), state?.table, 'Insert table')}
+        {tool('Image link', insertImageUrl, false, 'Insert image by URL')}
+        {tool('Upload', () => fileInput.current?.click(), false, 'Upload images from your computer')}
         <input
           ref={fileInput}
           type="file"
@@ -219,10 +221,7 @@ export default function Editor({
             {tool('− col', () => editor.chain().focus().deleteColumn().run(), false, 'Delete column')}
           </>
         )}
-        <span className="toolbar-divider" />
-        {tool('↶', () => editor.chain().focus().undo().run(), false, 'Undo')}
-        {tool('↷', () => editor.chain().focus().redo().run(), false, 'Redo')}
-        <span className="toolbar-divider" />
+        <span className="toolbar-spacer" />
         <button
           type="button"
           className="tool tool-comment"
@@ -230,7 +229,7 @@ export default function Editor({
           disabled={state ? state.selectionEmpty && !state.selectedImageSrc : true}
           title={state?.selectedImageSrc ? 'Comment on this image' : 'Comment on selected text'}
         >
-          + Comment
+          Comment
         </button>
       </div>
       <div className="editor-dropzone" onPaste={handlePaste} onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
