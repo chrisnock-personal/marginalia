@@ -35,6 +35,27 @@ function fakeFetch(calls: Call[]): typeof fetch {
   }
 }
 
+test('GitHub provider publishes a file that is not in the base tree', async () => {
+  const calls: Call[] = []
+  const provider = new GitHubProvider(() => 'test-pat', fakeFetch(calls))
+  await provider.publish({
+    provider: 'github',
+    repo: 'o/r',
+    branch: 'marginalia/new-file',
+    commitMessage: 'Add new page',
+    files: [{ path: 'docs/new-page.md', content: '# New page\n' }],
+    comments: { version: 1, comments: [] },
+  })
+
+  const blobs = calls.filter((call) => call.url.endsWith('/git/blobs'))
+  assert.equal(blobs.length, 2, 'new Markdown and comments.json')
+  assert.equal(JSON.parse(blobs[0].body!).content, Buffer.from('# New page\n').toString('base64'))
+  const treeBody = JSON.parse(calls.find((call) => call.url.endsWith('/git/trees'))!.body!)
+  const entry = treeBody.tree.find((row: { path: string }) => row.path === 'docs/new-page.md')
+  assert.equal(entry?.type, 'blob')
+  assert.match(entry?.sha ?? '', /^blob-/)
+})
+
 test('GitHub provider sends the PAT and builds a commit and PR', async () => {
   const calls: Call[] = []
   const provider = new GitHubProvider(() => 'test-pat', fakeFetch(calls))
