@@ -18,29 +18,24 @@ interface PublishFilesInput {
   original: string
   docEdits: Record<string, string>
   assets: FileChange[]
+  /** New path -> original path for staged moves (client-side only). */
+  movedFrom?: Record<string, string>
   comments: CommentsFile
 }
 
 /**
- * Match an added base64 asset with a deleted asset holding the same bytes.
- * A rename stages the new path with its bytes and deletes the old path, so
- * equal bytes identify a move without changing the changes sent to the API.
+ * Pair each staged move (new path -> original path) with its added and deleted
+ * entries. A pair is shown only when both entries are still staged.
  */
-function findMovePairs(assets: FileChange[]) {
-  const additions = assets.filter((asset) => !asset.delete)
-  const deletions = assets.filter((asset) => asset.delete)
+function findMovePairs(assets: FileChange[], movedFrom: Record<string, string>) {
   const deletedByAdd = new Map<FileChange, FileChange>()
   const addedByDelete = new Map<FileChange, FileChange>()
-  const usedDeletes = new Set<FileChange>()
-
-  for (const addition of additions) {
-    if (addition.encoding !== 'base64') continue
-    const deleted = deletions.find((entry) =>
-      !usedDeletes.has(entry) && entry.path !== addition.path && entry.content === addition.content)
-    if (!deleted) continue
-    usedDeletes.add(deleted)
-    deletedByAdd.set(addition, deleted)
-    addedByDelete.set(deleted, addition)
+  for (const [newPath, oldPath] of Object.entries(movedFrom)) {
+    const added = assets.find((asset) => asset.path === newPath && !asset.delete)
+    const deleted = assets.find((asset) => asset.path === oldPath && asset.delete)
+    if (!added || !deleted || added === deleted) continue
+    deletedByAdd.set(added, deleted)
+    addedByDelete.set(deleted, added)
   }
   return { deletedByAdd, addedByDelete }
 }
@@ -52,6 +47,7 @@ export function buildPublishFiles({
   original,
   docEdits,
   assets,
+  movedFrom = {},
   comments,
 }: PublishFilesInput): PublishFileRow[] {
   const files: PublishFileRow[] = []
@@ -62,7 +58,7 @@ export function buildPublishFiles({
     files.push({ change: { path: filePath, content }, status: 'edited' })
   }
 
-  const { deletedByAdd, addedByDelete } = findMovePairs(assets)
+  const { deletedByAdd, addedByDelete } = findMovePairs(assets, movedFrom)
   for (const asset of assets) {
     const added = addedByDelete.get(asset)
     if (added) {

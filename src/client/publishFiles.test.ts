@@ -27,8 +27,9 @@ test('publish files include the edited page, rewrites, staged/deleted/moved asse
       { path: 'docs/assets/pasted.png', content: 'cGFzdGVk', encoding: 'base64' },
       { path: 'docs/assets/gone.png', content: '', delete: true },
       { path: 'docs/assets/new.png', content: 'bW92ZWQ=', encoding: 'base64' },
-      { path: 'docs/assets/old.png', content: 'bW92ZWQ=', delete: true },
+      { path: 'docs/assets/old.png', content: '', delete: true },
     ],
+    movedFrom: { 'docs/assets/new.png': 'docs/assets/old.png' },
     comments,
   })
 
@@ -38,7 +39,7 @@ test('publish files include the edited page, rewrites, staged/deleted/moved asse
     { path: 'docs/assets/pasted.png', content: 'cGFzdGVk', encoding: 'base64' },
     { path: 'docs/assets/gone.png', content: '', delete: true },
     { path: 'docs/assets/new.png', content: 'bW92ZWQ=', encoding: 'base64' },
-    { path: 'docs/assets/old.png', content: 'bW92ZWQ=', delete: true },
+    { path: 'docs/assets/old.png', content: '', delete: true },
     { path: 'comments.json', content: serializeComments(comments) },
   ])
   assert.deepEqual(rows.map((row) => [row.status, row.pairPath]), [
@@ -70,7 +71,7 @@ test('an unchanged page is omitted but comments.json is always published', () =>
   assert.equal(rows[0].commentCount, 0)
 })
 
-test('different bytes are not treated as a move', () => {
+test('an add and delete are not a move unless recorded as one', () => {
   const rows = buildPublishFiles({
     path: 'docs/page.md',
     markdown: '# Same\n',
@@ -78,7 +79,7 @@ test('different bytes are not treated as a move', () => {
     docEdits: {},
     assets: [
       { path: 'docs/assets/pasted.png', content: 'YQ==', encoding: 'base64' },
-      { path: 'docs/assets/old.png', content: 'Yg==', delete: true },
+      { path: 'docs/assets/old.png', content: '', delete: true },
     ],
     comments: emptyComments(),
   })
@@ -86,4 +87,19 @@ test('different bytes are not treated as a move', () => {
   assert.deepEqual(rows.slice(0, 2).map((row) => row.status), ['added', 'deleted'])
   assert.equal(rows[0].pairPath, undefined)
   assert.equal(rows[1].pairPath, undefined)
+})
+
+test('a stale move record without both staged entries is ignored', () => {
+  const rows = buildPublishFiles({
+    path: 'docs/page.md',
+    markdown: '# Same\n',
+    original: '# Same\n',
+    docEdits: {},
+    assets: [{ path: 'docs/assets/old.png', content: '', delete: true }],
+    movedFrom: { 'docs/assets/new.png': 'docs/assets/old.png' },
+    comments: emptyComments(),
+  })
+
+  assert.equal(rows[0].status, 'deleted')
+  assert.equal(rows[0].pairPath, undefined)
 })

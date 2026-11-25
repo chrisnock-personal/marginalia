@@ -35,6 +35,9 @@ export default function App() {
   const [original, setOriginal] = useState('')
   const [markdown, setMarkdown] = useState('')
   const [assets, setAssets] = useState<FileChange[]>([])
+  // New path -> original repo path for staged moves. Only used to label rows in
+  // the publish dialog; never sent to the API.
+  const [movedFrom, setMovedFrom] = useState<Record<string, string>>({})
   const [repoAssets, setRepoAssets] = useState<FileEntry[]>([])
   const [docEdits, setDocEdits] = useState<Record<string, string>>({})
   const [comments, setComments] = useState(emptyComments().comments)
@@ -88,6 +91,7 @@ export default function App() {
     setFiles([])
     setPath('')
     setAssets([])
+    setMovedFrom({})
     setRepoAssets([])
     setDocEdits({})
     baseMarkdown.current = {}
@@ -243,9 +247,11 @@ export default function App() {
         if (!wasRepoAsset || current.some((asset) => asset.path === oldPath && asset.delete)) {
           return [...rest, moved]
         }
-        // Keep the bytes on the deletion so the dialog can show this as a move;
-        // the server ignores content when `delete` is set.
-        return [...rest, moved, { path: oldPath, content: bytesBase64, delete: true }]
+        return [...rest, moved, { path: oldPath, content: '', delete: true }]
+      })
+      setMovedFrom((current) => {
+        const { [oldPath]: origin = oldPath, ...rest } = current
+        return origin === newPath ? rest : { ...rest, [newPath]: origin }
       })
       setComments((current) => current.map((comment) =>
         comment.target?.path === oldPath
@@ -268,6 +274,10 @@ export default function App() {
         if (!wasRepoAsset || current.some((asset) => asset.path === assetPath && asset.delete)) return rest
         return [...rest, { path: assetPath, content: '', delete: true }]
       })
+      setMovedFrom((current) => {
+        const { [assetPath]: _removed, ...rest } = current
+        return rest
+      })
       setComments((current) => current.filter((comment) => comment.target?.path !== assetPath))
       setNotice(`Deleted ${assetPath}; image embeds removed from Markdown`)
     } catch (err) {
@@ -277,7 +287,7 @@ export default function App() {
 
   const commentsFile: CommentsFile = { version: 1, comments }
   const publishFileRows = buildPublishFiles({
-    path, markdown, original, docEdits, assets, comments: commentsFile,
+    path, markdown, original, docEdits, assets, movedFrom, comments: commentsFile,
   })
 
   const openPublish = () => {
@@ -299,13 +309,15 @@ export default function App() {
         baseSha,
         branch: values.branch,
         commitMessage: values.commitMessage,
-        files: publishFileRows.map((row) => row.change),
+        // comments.json goes in `comments`; its row is only for the dialog.
+        files: publishFileRows.filter((row) => row.status !== 'comments').map((row) => row.change),
         comments: commentsFile,
         pr: { title: values.title, body: values.body },
       })
       setPublishResult(result)
       setOriginal(markdown)
       setAssets([])
+      setMovedFrom({})
       setDocEdits({})
       baseMarkdown.current = {}
       setPublishOpen(false)
@@ -357,6 +369,7 @@ export default function App() {
   const reloadFile = () => {
     setPublishOpen(false)
     setAssets([])
+    setMovedFrom({})
     setDocEdits({})
     baseMarkdown.current = {}
     setReloadKey((key) => key + 1)
@@ -446,7 +459,7 @@ export default function App() {
                 <button
                   type="button"
                   className={file.path === path ? 'file active' : 'file'}
-                  onClick={() => { setPath(file.path); setAssets([]); setPublishResult(null) }}
+                  onClick={() => { setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null) }}
                 >
                   {file.path.split('/').pop()}
                 </button>
