@@ -13,7 +13,7 @@ no database and keeps no server-side copy of documents.
 | React client | `src/client/` | Repo/file browsing, TipTap editor, comments panel, asset manager, HTML export, publish and PAT dialogs |
 | API server | `src/server/` | Express JSON API, provider selection, token state |
 | Git provider interface | `src/server/providers/types.ts` | `listRepos`, `listMarkdownFiles`, `listAssets`, `readFile`, `readAsset`, `headSha`, `publish` |
-| Local provider | `src/server/providers/local.ts` | Reads working tree, publishes via a temporary git worktree |
+| Local provider | `src/server/providers/local.ts` | Reads committed content (following `origin`), publishes via a temporary git worktree |
 | GitHub provider | `src/server/providers/github.ts` | GitHub REST: contents, trees, blobs, commits, refs, PRs |
 | Shared models | `src/shared/` | API types and `comments.json` validation/serialization |
 
@@ -57,8 +57,8 @@ replies. Renaming an image updates targets in `comments.json`; deleting it remov
 
 ## Publishing
 
-The client records the base ref's commit SHA when it opens a document and sends it with the publish
-request. The server compares it with the current head before writing anything; a mismatch returns
+The client records the base ref's commit SHA when it opens a document, reads the page and
+`comments.json` at that SHA, and sends the SHA with the publish request. The server compares it with the current head before writing anything; a mismatch returns
 `409 CONFLICT` and the UI offers to reload the file. This is deliberately conservative (any commit
 to the base branch triggers it) but prevents silently overwriting newer work. A three-way merge is
 future work.
@@ -70,7 +70,10 @@ the local provider decodes before writing and the GitHub provider passes the bas
 blobs API. `FileChange.delete: true` removes a path: `rm` in the local worktree, `sha: null` in the
 GitHub tree API.
 
-- **Local**: create a detached worktree from the base ref in a temp dir, create a new branch there,
+- **Local**: `git fetch origin` (no credential prompts, 15 s timeout) and use `origin/<base ref>`
+  as the base, falling back to the local ref when there is no reachable origin. Reads by branch
+  name follow the same remote-tracking ref, so the editor never shows a stale checkout. Create a
+  detached worktree from that base commit in a temp dir, create a new branch there,
   write the files, commit with an explicit identity, push to `origin`, then use `gh pr create` when
   the remote is GitHub. The user's checkout and uncommitted work are never modified; the worktree
   is removed in `finally`.

@@ -156,10 +156,23 @@ test('local provider uses commits pushed to origin while the checkout is behind'
     )
     assert.equal(git(['worktree', 'list'], repo).split('\n').length, 1)
 
-    const result = await provider.publish({ ...request, baseSha: remoteSha })
+    // The client reads the page at the head SHA (and listings by branch name),
+    // so it edits the upstream text, not the stale checkout.
+    const loaded = await provider.readFile('test', 'guide.md', remoteSha)
+    assert.match(loaded ?? '', /Pushed from another clone/)
+    assert.match(await provider.readFile('test', 'guide.md', 'main') ?? '', /Pushed from another clone/)
+    assert.equal(await provider.readFile('test', 'guide.md'), '# Guide\n', 'no ref still reads the working tree')
+
+    const result = await provider.publish({
+      ...request,
+      baseSha: remoteSha,
+      files: [...request.files, { path: 'guide.md', content: `${loaded}\nLocal edit.\n` }],
+    })
     assert.equal(result.pushed, true)
     assert.equal(git(['rev-parse', 'marginalia/origin-edit^'], remote), remoteSha)
-    assert.match(git(['show', 'marginalia/origin-edit:guide.md'], remote), /Pushed from another clone/)
+    const published = git(['show', 'marginalia/origin-edit:guide.md'], remote)
+    assert.match(published, /Pushed from another clone/, 'upstream change must survive an edit of the same file')
+    assert.match(published, /Local edit\./)
     assert.match(git(['show', 'marginalia/origin-edit:notes.md'], remote), /# Notes/)
     assert.equal(git(['rev-parse', 'HEAD'], repo), staleSha)
     assert.equal(git(['status', '--porcelain'], repo), '')
