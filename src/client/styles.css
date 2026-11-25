@@ -48,18 +48,19 @@ button.primary { background: #3457d5; color: white; border-color: #3457d5; }
 .file-sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #7a8396; margin: 4px 4px 8px; }
 .file-sidebar select { width: 100%; margin-bottom: 18px; }
 .file-list { list-style: none; margin: 0; padding: 0; }
-.file button {
+button.file {
   display: block; width: 100%; text-align: left; border: 0; background: transparent;
   padding: 7px 9px; border-radius: 6px; color: #35405a;
 }
-.file button:hover { background: #f0f3fa; }
-.file button.active { background: #e6ecff; color: #2440a8; font-weight: 600; }
+button.file:hover { background: #f0f3fa; }
+button.file.active { background: #e6ecff; color: #2440a8; font-weight: 600; }
 
 .main-pane { overflow-y: auto; padding: 20px 26px; background: #fff; }
 .doc-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .doc-header h2 { margin: 0 0 4px; font-size: 17px; }
 .doc-actions { display: flex; gap: 8px; flex-shrink: 0; }
-.doc-actions button { padding: 7px 11px; border: 1px solid #d5dae3; border-radius: 7px; background: white; }
+.doc-actions button { padding: 7px 11px; border: 1px solid #d5dae3; border-radius: 7px; }
+.doc-actions button:not(.primary) { background: white; }
 .muted { color: #7a8396; font-size: 12px; }
 .placeholder { max-width: 520px; margin: 18vh auto; text-align: center; color: #687287; }
 .placeholder h2 { color: #333c50; }
