@@ -307,7 +307,8 @@ button.file.active { background: var(--hover); color: var(--ink); font-weight: 6
   .workspace { display: block; overflow: visible; }
   .files-panel { width: auto; border-right: 0; border-bottom: 1px solid var(--rule); padding: 10px 12px; }
   .toolbar { top: 52px; flex-wrap: nowrap; overflow-x: auto; padding: 4px 8px; border-bottom: 1px solid var(--rule); }
-  .tool { min-height: 40px; white-space: nowrap; }
+  .tool { min-height: 40px; white-space: nowrap; flex-shrink: 0; }
+  .toolbar-divider, .toolbar-spacer { flex-shrink: 0; }
   .editor-content { padding: 24px 20px 48px; }
   .editor-content .ProseMirror { min-height: 40vh; }
   .comments-panel { padding: 16px 20px 40px; }
