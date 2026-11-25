@@ -136,10 +136,10 @@ button.file.active { background: var(--hover); color: var(--ink); font-weight: 6
 }
 .empty p { margin: 0; font-family: var(--writing); font-size: 17px; line-height: 1.6; color: var(--ink-soft); }
 
-.editor-shell { max-width: 740px; margin: 0 auto; }
+.editor-shell { --gutter: clamp(30px, 4vw, 72px); }  /* the writing fills its pane; hiding a panel gives it the room */
 .toolbar {
   position: sticky; top: 0; z-index: 2; background: rgb(255 255 255 / 96%);
-  display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 14px 30px 6px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 14px var(--gutter) 6px;
 }
 .tool { min-width: 30px; padding: 6px 8px; font-size: 13px; }
 .tool-bold { font-weight: 700; }
@@ -151,7 +151,7 @@ button.file.active { background: var(--hover); color: var(--ink); font-weight: 6
 .tool.tool-comment:disabled { border-color: transparent; color: var(--faint); font-weight: 400; }
 
 .editor-content {
-  padding: 30px 30px 96px; font-family: var(--writing); font-size: 17px; line-height: 1.7; color: var(--ink);
+  padding: 30px var(--gutter) 96px; font-family: var(--writing); font-size: 17px; line-height: 1.7; color: var(--ink);
 }
 .editor-content .ProseMirror { outline: none; min-height: 60vh; }
 .editor-content h1, .editor-content h2, .editor-content h3 { line-height: 1.25; font-weight: 650; letter-spacing: -.01em; }
