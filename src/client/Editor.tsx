@@ -9,7 +9,7 @@ import { anchorFromSelection } from './anchors'
 import { repoPathFor } from './assetPaths'
 import { CommentHighlight, setCommentHighlights } from './commentHighlight'
 import { normalizeMarkdown } from './markdownFormat'
-import RepoImage, { clearImagePreviews, setImagePreview } from './repoImage'
+import RepoImage, { setImagePreview } from './repoImage'
 
 interface Props {
   documentKey: string
@@ -94,8 +94,6 @@ export default function Editor({
       }
     },
   })
-
-  useEffect(() => () => clearImagePreviews(), [documentKey])
 
   useEffect(() => {
     callbacks.current.onEditorReady?.(editor)

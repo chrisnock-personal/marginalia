@@ -17,12 +17,12 @@ const comments: CommentsFile = {
   }],
 }
 
-test('publish files include the edited page, rewrites, staged/deleted/moved assets and comments', () => {
+test('publish files include every edited page, rewrites, staged/deleted/moved assets and comments', () => {
   const rows = buildPublishFiles({
-    path: 'docs/page.md',
-    markdown: '# New page\n',
-    original: '# Old page\n',
-    docEdits: { 'docs/other.md': '# Rewritten links\n' },
+    docEdits: {
+      'docs/page.md': '# New page\n',
+      'docs/other.md': '# Rewritten links\n',
+    },
     assets: [
       { path: 'docs/assets/pasted.png', content: 'cGFzdGVk', encoding: 'base64' },
       { path: 'docs/assets/gone.png', content: '', delete: true },
@@ -54,28 +54,22 @@ test('publish files include the edited page, rewrites, staged/deleted/moved asse
   assert.equal(rows[6].commentCount, 1)
 })
 
-test('an unchanged page is omitted but comments.json is always published', () => {
+test('no Markdown edits still publishes staged assets and comments.json', () => {
   const rows = buildPublishFiles({
-    path: 'docs/page.md',
-    markdown: '# Same\n',
-    original: '# Same\n',
     docEdits: {},
-    assets: [],
+    assets: [{ path: 'docs/assets/pasted.png', content: 'YQ==', encoding: 'base64' }],
     comments: emptyComments(),
   })
 
   assert.deepEqual(rows.map((row) => row.change), [
+    { path: 'docs/assets/pasted.png', content: 'YQ==', encoding: 'base64' },
     { path: 'comments.json', content: serializeComments(emptyComments()) },
   ])
-  assert.equal(rows[0].status, 'comments')
-  assert.equal(rows[0].commentCount, 0)
+  assert.deepEqual(rows.map((row) => row.status), ['added', 'comments'])
 })
 
 test('an add and delete are not a move unless recorded as one', () => {
   const rows = buildPublishFiles({
-    path: 'docs/page.md',
-    markdown: '# Same\n',
-    original: '# Same\n',
     docEdits: {},
     assets: [
       { path: 'docs/assets/pasted.png', content: 'YQ==', encoding: 'base64' },
@@ -91,9 +85,6 @@ test('an add and delete are not a move unless recorded as one', () => {
 
 test('a stale move record without both staged entries is ignored', () => {
   const rows = buildPublishFiles({
-    path: 'docs/page.md',
-    markdown: '# Same\n',
-    original: '# Same\n',
     docEdits: {},
     assets: [{ path: 'docs/assets/old.png', content: '', delete: true }],
     movedFrom: { 'docs/assets/new.png': 'docs/assets/old.png' },
