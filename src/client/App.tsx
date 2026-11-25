@@ -25,6 +25,17 @@ import { previewToSrc, setImagePreview } from './repoImage'
 import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
 
+/** Group files by folder, root files first, both alphabetical. */
+function groupByFolder(files: FileEntry[]): Array<[string, FileEntry[]]> {
+  const groups = new Map<string, FileEntry[]>()
+  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    const slash = file.path.lastIndexOf('/')
+    const folder = slash >= 0 ? file.path.slice(0, slash) : ''
+    groups.set(folder, [...(groups.get(folder) ?? []), file])
+  }
+  return [...groups].sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)))
+}
+
 export default function App() {
   const [config, setConfig] = useState<ProviderInfo[]>([])
   const [provider, setProvider] = useState<ProviderId>('local')
@@ -417,130 +428,151 @@ export default function App() {
     deleted: assets.some((asset) => asset.path === assetPath && asset.delete),
   }))
 
+  const docComments = comments.filter((comment) => comment.path === path)
+  const changedFiles = publishFileRows.filter((row) => row.status !== 'comments').length
+  const fileGroups = groupByFolder(files)
+  const slash = path.lastIndexOf('/')
+
   return (
     <div className="app">
       <header className="app-header">
-        <div className="brand">
-          <span className="logo">M</span>
-          <div>
-            <h1>Marginalia</h1>
-            <p>Markdown editing with margin notes and PR publishing</p>
-          </div>
+        <span className="wordmark">Marginalia</span>
+        <div className="pickers">
+          <label className="picker">
+            <span>Source</span>
+            <select value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)}>
+              {config.map((info) => (
+                <option key={info.id} value={info.id} disabled={!info.configured}>
+                  {info.label}{info.configured ? '' : ' (not connected)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="picker">
+            <span>Repository</span>
+            <select value={repoId} onChange={(e) => selectRepo(e.target.value)} disabled={!anyConfigured}>
+              <option value="">Choose a repo…</option>
+              {repos.map((repo) => (
+                <option key={repo.id} value={repo.id}>{repo.fullName}</option>
+              ))}
+            </select>
+          </label>
         </div>
-        <div className="header-actions">
-          <select value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)}>
-            {config.map((info) => (
-              <option key={info.id} value={info.id} disabled={!info.configured}>
-                {info.label}{info.configured ? '' : ' (not connected)'}
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={() => setPatOpen(true)}>
-            GitHub sign-in{github?.detail ? ` · ${github.detail}` : ''}
-          </button>
-        </div>
+        <button type="button" className="quiet signin" onClick={() => setPatOpen(true)}>
+          {github?.detail ? github.detail.replace('Authenticated as ', 'GitHub: ') : 'Connect GitHub'}
+        </button>
       </header>
 
-      {error && <div className="banner error-banner">{error}</div>}
+      {error && <div className="banner error-banner" role="alert">{error}</div>}
       {notice && (
-        <div className={notice.startsWith('Staged') ? 'banner info-banner' : 'banner success-banner'}>
+        <div className={notice.startsWith('Staged') ? 'banner info-banner' : 'banner success-banner'} role="status">
           {notice}
         </div>
       )}
       {!anyConfigured && (
         <div className="banner setup-banner">
           No git source configured. Set <code>MARGINALIA_LOCAL_REPOS</code> to colon-separated repo
-          paths, or connect with GitHub below.
+          paths, or connect GitHub.
         </div>
       )}
 
       <div className="workspace">
-        <nav className="file-sidebar">
-          <h2>Repository</h2>
-          <select value={repoId} onChange={(e) => selectRepo(e.target.value)} disabled={!anyConfigured}>
-            <option value="">Choose a repo…</option>
-            {repos.map((repo) => (
-              <option key={repo.id} value={repo.id}>{repo.fullName}</option>
-            ))}
-          </select>
-          <h2>Markdown files</h2>
-          <ul className="file-list">
-            {files.map((file) => (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  className={file.path === path ? 'file active' : 'file'}
-                  onClick={() => { setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null) }}
-                >
-                  {file.path.split('/').pop()}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {repoId && files.length === 0 && <p className="empty-hint">No Markdown files found.</p>}
+        <nav className="file-sidebar" aria-label="Markdown files">
+          {!repoId && <p className="empty-hint">Choose a repository to see its Markdown files.</p>}
+          {repoId && files.length === 0 && <p className="empty-hint">No Markdown files in this repository.</p>}
+          {fileGroups.map(([folder, entries]) => (
+            <div key={folder} className="file-group">
+              {folder && <h2 className="folder">{folder}/</h2>}
+              <ul className="file-list">
+                {entries.map((file) => (
+                  <li key={file.path}>
+                    <button
+                      type="button"
+                      className={file.path === path ? 'file active' : 'file'}
+                      aria-current={file.path === path ? 'page' : undefined}
+                      onClick={() => { setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null) }}
+                    >
+                      {file.path.split('/').pop()}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </nav>
 
-        <main className="main-pane">
+        <main className="desk">
           {path ? (
-            <>
-              <div className="doc-header">
-                <div>
-                  <h2>{path}</h2>
-                  <span className="muted">
-                    {dirty ? 'Unpublished edits' : 'No local edits'} · {comments.filter((c) => c.path === path).length} comment(s)
-                    {assets.length > 0 && ` · ${assets.length} file change(s) staged`}
+            <div className="sheet">
+              <div className="sheet-bar">
+                <div className="doc-title">
+                  <h1>
+                    {slash >= 0 && <span className="doc-folder">{path.slice(0, slash + 1)}</span>}
+                    {path.slice(slash + 1)}
+                  </h1>
+                  <span className={dirty ? 'doc-status dirty' : 'doc-status'}>
+                    {dirty
+                      ? `${changedFiles} ${changedFiles === 1 ? 'file' : 'files'} changed, not published yet`
+                      : 'No edits yet'}
                   </span>
                 </div>
                 <div className="doc-actions">
-                  <button type="button" onClick={() => setExportOpen(true)}>Export</button>
-                  <button type="button" onClick={() => setAssetOpen(true)}>
-                    Assets ({assetViews.length})
+                  <button type="button" className="quiet" onClick={() => setExportOpen(true)}>Export</button>
+                  <button type="button" className="quiet" onClick={() => setAssetOpen(true)}>
+                    Images ({assetViews.length})
                   </button>
                   <button type="button" className="primary" onClick={openPublish}>Publish PR</button>
                 </div>
               </div>
-              {loadingFile && <p className="muted">Loading document…</p>}
-              {publishResult && (
-                <div className="banner success-banner">
-                  Published branch <code>{publishResult.branch}</code>
-                  {publishResult.prUrl && <> · <a href={publishResult.prUrl} target="_blank" rel="noreferrer">Open PR</a></>}
-                  {publishResult.notes.map((note) => <span key={note}> · {note}</span>)}
+              <div className="sheet-body">
+                <div className="page">
+                  {loadingFile && <p className="muted loading">Loading document…</p>}
+                  {publishResult && (
+                    <div className="banner success-banner published">
+                      Published branch <code>{publishResult.branch}</code>.
+                      {publishResult.prUrl && <> <a href={publishResult.prUrl} target="_blank" rel="noreferrer">Open the pull request</a>.</>}
+                      {publishResult.notes.map((note) => <span key={note}> {note}.</span>)}
+                    </div>
+                  )}
+                  <Editor
+                    documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
+                    docPath={path}
+                    markdown={markdown}
+                    sourceMarkdown={original}
+                    comments={comments}
+                    resolveSrc={resolveSrc}
+                    onAsset={stageAsset}
+                    onChange={setMarkdown}
+                    onEditorReady={(instance) => { editorRef.current = instance }}
+                    onAddComment={(anchor, target) => {
+                      if (!anchor && !target) setError('Select some text or click an image before adding a comment')
+                      else { setError(null); setPendingAnchor(anchor); setPendingTarget(target ?? null) }
+                    }}
+                  />
                 </div>
-              )}
-              <Editor
-                documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
-                docPath={path}
-                markdown={markdown}
-                sourceMarkdown={original}
-                comments={comments}
-                resolveSrc={resolveSrc}
-                onAsset={stageAsset}
-                onChange={setMarkdown}
-                onEditorReady={(instance) => { editorRef.current = instance }}
-                onAddComment={(anchor, target) => {
-                  if (!anchor && !target) setError('Select some text or click an image before adding a comment')
-                  else { setError(null); setPendingAnchor(anchor); setPendingTarget(target ?? null) }
-                }}
-              />
-            </>
+                <CommentsPanel
+                  path={path}
+                  comments={comments}
+                  pendingAnchor={pendingAnchor}
+                  pendingTarget={pendingTarget}
+                  onSave={saveComment}
+                  onCancel={() => { setPendingAnchor(null); setPendingTarget(null) }}
+                  onToggleResolved={toggleResolved}
+                  onDelete={deleteComment}
+                />
+              </div>
+            </div>
           ) : (
-            <div className="placeholder">
-              <h2>Review and edit Markdown in context</h2>
-              <p>Choose a repository and a file. Select text or click an image to leave a comment, then publish the edits and comments as a pull request.</p>
+            <div className="sheet sheet-empty">
+              <h1>Review and edit Markdown in context</h1>
+              <p>
+                {repoId
+                  ? 'Open a file from the list. Select text or click an image to leave a note in the margin, then publish your edits and notes as a pull request.'
+                  : 'Choose a repository at the top, then open a file. Select text or click an image to leave a note in the margin, then publish your edits and notes as a pull request.'}
+              </p>
             </div>
           )}
         </main>
-
-        <CommentsPanel
-          path={path || null}
-          comments={comments}
-          pendingAnchor={pendingAnchor}
-          pendingTarget={pendingTarget}
-          onSave={saveComment}
-          onCancel={() => { setPendingAnchor(null); setPendingTarget(null) }}
-          onToggleResolved={toggleResolved}
-          onDelete={deleteComment}
-        />
       </div>
 
       {publishOpen && (
@@ -568,7 +600,7 @@ export default function App() {
       {exportOpen && (
         <ExportDialog
           title={path}
-          commentCount={comments.filter((comment) => comment.path === path).length}
+          commentCount={docComments.length}
           onClose={() => setExportOpen(false)}
           onPrint={(includeComments) => {
             try {
