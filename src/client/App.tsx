@@ -17,7 +17,7 @@ import AssetDialog, { type AssetView } from './AssetDialog'
 import { relativeSrcFor, repoPathFor, rewriteReferences } from './assetPaths'
 import CommentsPanel from './CommentsPanel'
 import Editor from './Editor'
-import { buildExportHtml, downloadHtml, printHtml } from './export'
+import { buildExportHtml, downloadHtml, inlineImageSources, printHtml, resolveExportImageSource } from './export'
 import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
 import { previewToSrc, setImagePreview } from './repoImage'
@@ -357,19 +357,26 @@ export default function App() {
     setReloadKey((key) => key + 1)
   }
 
-  const exportHtml = (includeComments: boolean): string => {
-    // Editor HTML uses local preview URLs for staged/moved images; exports need
-    // a URL that still resolves after the HTML is downloaded or printed.
-    const html = (editorRef.current?.getHTML() ?? '').replace(
-      /(<img\b[^>]*\bsrc\s*=\s*)(["'])(blob:[^"']+)\2/gi,
-      (full, prefix: string, quote: string, url: string) => {
-        const src = previewToSrc(url)
-        const repoPath = src ? repoPathFor(path, src) : null
-        return repoPath
-          ? `${prefix}${quote}${api.assetSrc(provider, repoId, repoPath, baseRef)}${quote}`
-          : full
-      },
-    )
+  const exportHtml = async (includeComments: boolean): Promise<string> => {
+    // Editor HTML contains blob previews, API asset URLs and external URLs.
+    // Inline them all so the downloaded file works without this server.
+    const resolved = new Map<string, Promise<string | null>>()
+    const html = await inlineImageSources(editorRef.current?.getHTML() ?? '', (src) => {
+      let pending = resolved.get(src)
+      if (!pending) {
+        pending = resolveExportImageSource(src, {
+          docPath: path,
+          provider,
+          repoId,
+          baseRef,
+          assets,
+          previewToSrc,
+          assetBase64: api.assetBase64,
+        })
+        resolved.set(src, pending)
+      }
+      return pending
+    })
     return buildExportHtml({
       title: path,
       html,
@@ -543,15 +550,20 @@ export default function App() {
           onClose={() => setExportOpen(false)}
           onPrint={(includeComments) => {
             try {
-              printHtml(exportHtml(includeComments))
-              setExportOpen(false)
+              void printHtml(exportHtml(includeComments))
+                .then(() => setExportOpen(false))
+                .catch((err: Error) => setError(err.message))
             } catch (err) {
               setError((err as Error).message)
             }
           }}
           onDownload={(includeComments) => {
-            downloadHtml(path.replace(/\.(md|markdown)$/i, ''), exportHtml(includeComments))
-            setExportOpen(false)
+            void exportHtml(includeComments)
+              .then((html) => {
+                downloadHtml(path.replace(/\.(md|markdown)$/i, ''), html)
+                setExportOpen(false)
+              })
+              .catch((err: Error) => setError(err.message))
           }}
         />
       )}
