@@ -4,6 +4,7 @@ import { emptyComments, newCommentId } from '../shared/comments'
 import type {
   Comment,
   CommentAnchor,
+  CommentsFile,
   FileChange,
   FileEntry,
   ImageTarget,
@@ -21,6 +22,7 @@ import { buildExportHtml, downloadHtml, inlineImageSources, printHtml, resolveEx
 import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
 import { previewToSrc, setImagePreview } from './repoImage'
+import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
 
 export default function App() {
@@ -33,6 +35,9 @@ export default function App() {
   const [original, setOriginal] = useState('')
   const [markdown, setMarkdown] = useState('')
   const [assets, setAssets] = useState<FileChange[]>([])
+  // New path -> original repo path for staged moves. Only used to label rows in
+  // the publish dialog; never sent to the API.
+  const [movedFrom, setMovedFrom] = useState<Record<string, string>>({})
   const [repoAssets, setRepoAssets] = useState<FileEntry[]>([])
   const [docEdits, setDocEdits] = useState<Record<string, string>>({})
   const [comments, setComments] = useState(emptyComments().comments)
@@ -86,6 +91,7 @@ export default function App() {
     setFiles([])
     setPath('')
     setAssets([])
+    setMovedFrom({})
     setRepoAssets([])
     setDocEdits({})
     baseMarkdown.current = {}
@@ -247,6 +253,10 @@ export default function App() {
         }
         return [...rest, moved, { path: oldPath, content: '', delete: true }]
       })
+      setMovedFrom((current) => {
+        const { [oldPath]: origin = oldPath, ...rest } = current
+        return origin === newPath ? rest : { ...rest, [newPath]: origin }
+      })
       setComments((current) => current.map((comment) =>
         comment.target?.path === oldPath
           ? { ...comment, target: { ...comment.target, path: newPath } }
@@ -268,12 +278,21 @@ export default function App() {
         if (!wasRepoAsset || current.some((asset) => asset.path === assetPath && asset.delete)) return rest
         return [...rest, { path: assetPath, content: '', delete: true }]
       })
+      setMovedFrom((current) => {
+        const { [assetPath]: _removed, ...rest } = current
+        return rest
+      })
       setComments((current) => current.filter((comment) => comment.target?.path !== assetPath))
       setNotice(`Deleted ${assetPath}; image embeds removed from Markdown`)
     } catch (err) {
       setError((err as Error).message)
     }
   }
+
+  const commentsFile: CommentsFile = { version: 1, comments }
+  const publishFileRows = buildPublishFiles({
+    path, markdown, original, docEdits, assets, movedFrom, comments: commentsFile,
+  })
 
   const openPublish = () => {
     const slug = path.split('/').pop()?.replace(/\.(md|markdown)$/i, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase() ?? 'edit'
@@ -294,17 +313,15 @@ export default function App() {
         baseSha,
         branch: values.branch,
         commitMessage: values.commitMessage,
-        files: [
-          ...(markdown === original ? [] : [{ path, content: markdown }]),
-          ...Object.entries(docEdits).map(([filePath, content]) => ({ path: filePath, content })),
-          ...assets,
-        ],
-        comments: { version: 1, comments },
+        // comments.json goes in `comments`; its row is only for the dialog.
+        files: publishFileRows.filter((row) => row.status !== 'comments').map((row) => row.change),
+        comments: commentsFile,
         pr: { title: values.title, body: values.body },
       })
       setPublishResult(result)
       setOriginal(markdown)
       setAssets([])
+      setMovedFrom({})
       setDocEdits({})
       baseMarkdown.current = {}
       setPublishOpen(false)
@@ -356,6 +373,7 @@ export default function App() {
   const reloadFile = () => {
     setPublishOpen(false)
     setAssets([])
+    setMovedFrom({})
     setDocEdits({})
     baseMarkdown.current = {}
     setReloadKey((key) => key + 1)
@@ -452,7 +470,7 @@ export default function App() {
                 <button
                   type="button"
                   className={file.path === path ? 'file active' : 'file'}
-                  onClick={() => { setPath(file.path); setAssets([]); setPublishResult(null) }}
+                  onClick={() => { setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null) }}
                 >
                   {file.path.split('/').pop()}
                 </button>
@@ -529,8 +547,7 @@ export default function App() {
         <PublishDialog
           branch={branch}
           path={path}
-          dirty={dirty}
-          comments={comments.length}
+          files={publishFileRows}
           busy={publishing}
           error={publishError}
           conflict={publishConflict}

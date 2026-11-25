@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react'
+import type { PublishFileRow } from './publishFiles'
 
 interface Props {
   branch: string
   path: string
-  dirty: boolean
-  comments: number
+  files: PublishFileRow[]
   busy: boolean
   error: string | null
   conflict: boolean
@@ -13,11 +13,23 @@ interface Props {
   onPublish: (values: { branch: string; commitMessage: string; title: string; body: string }) => void
 }
 
+function describeFile(file: PublishFileRow): string {
+  switch (file.status) {
+    case 'edited': return 'edited'
+    case 'added': return 'added'
+    case 'moved': return `moved from ${file.pairPath}`
+    case 'deleted': return file.pairPath ? `deleted (moved to ${file.pairPath})` : 'deleted'
+    case 'comments': {
+      const count = file.commentCount ?? 0
+      return `${count} comment${count === 1 ? '' : 's'}`
+    }
+  }
+}
+
 export default function PublishDialog({
   branch: initialBranch,
   path,
-  dirty,
-  comments,
+  files,
   busy,
   error,
   conflict,
@@ -36,7 +48,11 @@ export default function PublishDialog({
   }
 
   return (
-    <div className="overlay" role="presentation" onMouseDown={onClose}>
+    <div
+      className="overlay"
+      role="presentation"
+      onMouseDown={busy ? undefined : onClose}
+    >
       <div className="dialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <h2>Publish as a pull request</h2>
         <p className="muted">A new branch is created from the current default branch.</p>
@@ -60,8 +76,12 @@ export default function PublishDialog({
           <div className="changes">
             <strong>Files in this PR</strong>
             <ul>
-              {dirty && <li>{path} (edited)</li>}
-              <li>comments.json ({comments} comment{comments === 1 ? '' : 's'})</li>
+              {files.map((file, index) => (
+                <li key={`${file.change.path}-${index}`}>
+                  <code>{file.change.path}</code>{' '}
+                  <span className="muted">{describeFile(file)}</span>
+                </li>
+              ))}
             </ul>
           </div>
           {error && <p className="error">{error}</p>}
