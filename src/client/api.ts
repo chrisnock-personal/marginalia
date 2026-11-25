@@ -49,8 +49,10 @@ export const api = {
       ref ? `&ref=${encodeURIComponent(ref)}` : ''
     }`,
 
-  files: (provider: ProviderId, repo: string) =>
-    request<FileEntry[]>(`${repoPath(provider, repo)}/files`),
+  files: (provider: ProviderId, repo: string, ref?: string) =>
+    request<FileEntry[]>(
+      `${repoPath(provider, repo)}/files${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`,
+    ),
 
   assets: (provider: ProviderId, repo: string, ref?: string) =>
     request<FileEntry[]>(
@@ -69,14 +71,16 @@ export const api = {
     return btoa(binary)
   },
 
-  file: (provider: ProviderId, repo: string, path: string) =>
+  file: (provider: ProviderId, repo: string, path: string, ref?: string) =>
     request<{ path: string; content: string }>(
-      `${repoPath(provider, repo)}/file?path=${encodeURIComponent(path)}`,
+      `${repoPath(provider, repo)}/file?path=${encodeURIComponent(path)}${
+        ref ? `&ref=${encodeURIComponent(ref)}` : ''
+      }`,
     ),
 
-  async comments(provider: ProviderId, repo: string, path = 'comments.json'): Promise<CommentsFile> {
+  async comments(provider: ProviderId, repo: string, ref?: string, path = 'comments.json'): Promise<CommentsFile> {
     try {
-      const file = await this.file(provider, repo, path)
+      const file = await this.file(provider, repo, path, ref)
       return parseComments(file.content)
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) return emptyComments()

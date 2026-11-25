@@ -62,7 +62,8 @@ If `provider` is omitted, the first configured provider is used.
 
 ## `GET /repos/:provider/:repo/head?ref=<optional>`
 
-Returns the commit SHA at the tip of `ref` (default branch/`HEAD`).
+Returns the commit SHA at the tip of `ref` (default branch/`HEAD`). For a local repo with an
+`origin`, this fetches first and returns `origin/<ref>`.
 
 ```json
 { "sha": "a1b2c3d..." }

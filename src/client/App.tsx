@@ -106,7 +106,7 @@ export default function App() {
     setRepoAssets([])
     setDocEdits({})
     baseMarkdown.current = {}
-    api.files(provider, repoId)
+    api.files(provider, repoId, baseRef)
       .then((result) => { if (!cancelled) setFiles(result) })
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
     api.assets(provider, repoId, baseRef)
@@ -122,11 +122,14 @@ export default function App() {
     setError(null)
     setPendingAnchor(null)
     setPendingTarget(null)
-    Promise.all([
-      api.file(provider, repoId, path),
-      api.comments(provider, repoId),
-      api.head(provider, repoId, baseRef),
-    ])
+    // Read the page and comments at the exact commit the publish will build on
+    // and check against, so stale text can never be written over newer work.
+    api.head(provider, repoId, baseRef)
+      .then((head) => Promise.all([
+        api.file(provider, repoId, path, head.sha),
+        api.comments(provider, repoId, head.sha),
+        head,
+      ]))
       .then(([file, loaded, head]) => {
         if (cancelled) return
         setOriginal(file.content)
@@ -171,9 +174,10 @@ export default function App() {
   /** Base Markdown for all files, cached until a reload/publish. */
   const loadBaseMarkdown = async (): Promise<Record<string, string>> => {
     if (Object.keys(baseMarkdown.current).length) return baseMarkdown.current
-    const entries = files.length ? files : await api.files(provider, repoId)
+    const ref = baseSha || baseRef
+    const entries = files.length ? files : await api.files(provider, repoId, ref)
     const pairs = await Promise.all(entries.map(async (entry) =>
-      [entry.path, (await api.file(provider, repoId, entry.path)).content] as const,
+      [entry.path, (await api.file(provider, repoId, entry.path, ref)).content] as const,
     ))
     baseMarkdown.current = Object.fromEntries(pairs)
     return baseMarkdown.current

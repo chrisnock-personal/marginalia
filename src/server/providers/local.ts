@@ -28,6 +28,41 @@ function inside(root: string, relative: string): string {
 }
 
 /**
+ * Fetching must never wait on a credential prompt or a dead remote: the
+ * request would hang. Fall back to the local ref instead.
+ */
+const FETCH_TIMEOUT_MS = 15_000
+
+async function fetchOrigin(root: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['fetch', '--quiet', '--no-tags', 'origin'], {
+      cwd: root,
+      timeout: FETCH_TIMEOUT_MS,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function commitAt(root: string, ref: string): Promise<string | null> {
+  try {
+    return await run('git', ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`], root)
+  } catch {
+    return null
+  }
+}
+
+/** Same 409 response as the route conflict check, so the client offers a reload. */
+function baseChangedError(): Error {
+  return Object.assign(
+    new Error('Base branch changed since you opened the file. Reload before publishing.'),
+    { status: 409 },
+  )
+}
+
+/**
  * Publishes from a temporary detached worktree, so the user's checkout and
  * uncommitted work are never touched.
  */
@@ -68,9 +103,31 @@ export class LocalGitProvider implements GitProvider {
     }
   }
 
+  /**
+   * Fetching updates remote-tracking refs only: the configured checkout and its
+   * working tree are never touched. If there is no origin or the fetch fails,
+   * the local ref is used as before.
+   */
+  private async baseCommit(path: string, ref?: string): Promise<string> {
+    if (await fetchOrigin(path)) {
+      const remote = await commitAt(path, `refs/remotes/origin/${ref ?? 'HEAD'}`)
+      if (remote) return remote
+    }
+    return run('git', ['rev-parse', '--verify', '--end-of-options', `${ref ?? 'HEAD'}^{commit}`], path)
+  }
+
+  /**
+   * Reads by branch name follow the last-fetched origin branch, matching
+   * `baseCommit`, so listings and images show what a publish builds on.
+   * SHAs and other refs are used as given.
+   */
+  private async readRef(path: string, ref: string): Promise<string> {
+    return (await commitAt(path, `refs/remotes/origin/${ref}`)) ?? ref
+  }
+
   async listMarkdownFiles(repo: string, ref?: string): Promise<FileEntry[]> {
     const path = this.repoPath(repo)
-    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ?? 'HEAD'], path)
+    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ? await this.readRef(path, ref) : 'HEAD'], path)
     return output
       .split('\n')
       .filter((entry) => /\.(md|markdown)$/i.test(entry))
@@ -79,7 +136,7 @@ export class LocalGitProvider implements GitProvider {
 
   async listAssets(repo: string, ref?: string): Promise<FileEntry[]> {
     const path = this.repoPath(repo)
-    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ?? 'HEAD'], path)
+    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ? await this.readRef(path, ref) : 'HEAD'], path)
     return output
       .split('\n')
       .filter(isImagePath)
@@ -90,7 +147,7 @@ export class LocalGitProvider implements GitProvider {
     const root = this.repoPath(repo)
     if (ref) {
       try {
-        return await run('git', ['show', `${ref}:${checkRelativePath(path)}`], root)
+        return await run('git', ['show', `${await this.readRef(root, ref)}:${checkRelativePath(path)}`], root)
       } catch {
         return null
       }
@@ -106,7 +163,7 @@ export class LocalGitProvider implements GitProvider {
       try {
         const output = await execFileAsync(
           'git',
-          ['show', `${ref}:${checkRelativePath(path)}`],
+          ['show', `${await this.readRef(root, ref)}:${checkRelativePath(path)}`],
           { cwd: root, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
         )
         return output.stdout as Buffer
@@ -120,16 +177,14 @@ export class LocalGitProvider implements GitProvider {
   }
 
   async headSha(repo: string, ref?: string): Promise<string> {
-    return run(
-      'git',
-      ['rev-parse', '--verify', '--end-of-options', `${ref ?? 'HEAD'}^{commit}`],
-      this.repoPath(repo),
-    )
+    return this.baseCommit(this.repoPath(repo), ref)
   }
 
   async publish(request: PublishRequest): Promise<PublishResult> {
     const root = this.repoPath(request.repo)
     const branch = checkBranch(request.branch)
+    const base = await this.baseCommit(root, request.baseRef)
+    if (request.baseSha && request.baseSha !== base) throw baseChangedError()
 
     const commentsPath = checkRelativePath(request.commentsPath ?? DEFAULT_COMMENTS_PATH)
     const changes = [
@@ -151,7 +206,7 @@ export class LocalGitProvider implements GitProvider {
     const worktree = await mkdtemp(join(tmpdir(), 'marginalia-'))
     const notes: string[] = []
     try {
-      await run('git', ['worktree', 'add', '--detach', worktree, request.baseRef ?? 'HEAD'], root)
+      await run('git', ['worktree', 'add', '--detach', worktree, base], root)
       await run('git', ['checkout', '-b', branch], worktree)
 
       for (const [path, change] of unique) {
