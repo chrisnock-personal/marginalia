@@ -1,7 +1,7 @@
 # Marginalia
 
 A WYSIWYG Markdown editor for git repositories. Open a Markdown file from a local repo or from
-GitHub, edit it richly, leave comments anchored to selected text, and publish the edits plus a
+GitHub, edit it richly, leave comments on selected text or images, and publish the edits plus a
 sidecar `comments.json` as a pull request.
 
 ## Features
@@ -12,8 +12,12 @@ sidecar `comments.json` as a pull request.
   pasting, dropping or selecting local image files.
 - Pasted/dropped images are staged as binary files next to the Markdown file and committed in the
   same PR as the edit.
+- Asset manager: rename, move and delete images; Markdown references are rewritten in every file of
+  the repo and included in the same PR.
 - Two git sources: configured local repositories (git CLI) and GitHub (REST API).
-- Inline comments anchored to text, with threaded replies, stored in a separate `comments.json` in the PR.
+- Comments anchored to text or to an image, with threaded replies, stored in a separate
+  `comments.json` in the PR.
+- Standalone HTML export with print styles — use the browser’s **Save as PDF**.
 - Publishing creates a branch, one commit and optionally a PR — without touching your checkout.
 - Base-branch conflict detection: publishing fails if the base moved after the file was opened.
 - GitHub authentication with a PAT or a GitHub OAuth App (both held server-side only).
@@ -73,10 +77,14 @@ The env/file token is the fallback after a UI token; **Clear token** removes onl
    Markdown. Use **table** to insert a grid and the row/column tools that appear inside it.
 3. Insert an image by URL, or paste/drop/select an image file — it is staged in an `assets/` folder
    beside the document and included in the PR.
-4. Select text, click **+ Comment**, and write the note. Use **Reply** to continue a thread.
-5. Click **Publish PR**, check the branch/commit/PR details, and publish.
-6. If the base branch moved in the meantime, publishing returns a conflict prompt and offers a reload.
-7. The PR contains the edited Markdown (if changed), any staged image assets and `comments.json`.
+4. Use **Assets** to rename/move/delete images. References in all Markdown files are rewritten (or
+   image embeds removed) in the published PR.
+5. Select text or click an image, then click **+ Comment** and write the note. Use **Reply** to
+   continue a thread.
+6. Use **Export** for a standalone HTML view with print styles, then **Save as PDF** in the browser.
+7. Click **Publish PR**, check the branch/commit/PR details, and publish.
+8. If the base branch moved in the meantime, publishing returns a conflict prompt and offers a reload.
+9. The PR contains the edited Markdown, reference rewrites, file changes for assets and `comments.json`.
 
 Example `comments.json`:
 
@@ -98,6 +106,15 @@ Example `comments.json`:
       "author": "Chris",
       "createdAt": "2026-11-24T10:00:00.000Z",
       "resolved": false
+    },
+    {
+      "id": "c_m1abc_xyz124",
+      "path": "docs/guide.md",
+      "target": { "type": "image", "path": "docs/assets/screenshot.png" },
+      "body": "Update this screenshot.",
+      "author": "Chris",
+      "createdAt": "2026-11-25T10:00:00.000Z",
+      "resolved": false
     }
   ]
 }
@@ -105,7 +122,8 @@ Example `comments.json`:
 
 Anchors record offsets into the editor's rendered plain text plus prefix/suffix context; the UI
 re-finds the quote by offset hint, then context, then text search, so comments survive small edits.
-Replies reuse their parent's anchor and add `"parentId": "<root comment id>"`.
+Image comments use `target.path` (repo-relative) instead of an anchor and highlight the image node.
+Replies reuse their parent's anchor or target and add `"parentId": "<root comment id>"`.
 
 ## Development
 
@@ -122,6 +140,6 @@ Design notes: [docs/architecture.md](docs/architecture.md). API reference: [docs
 Prototype scope: single-user, single-document editing at a time; one GitHub identity per server
 process (no per-user sessions). Conflict detection is branch-level, not three-way file merges.
 Comments highlight in the editor but are not posted as GitHub review comments. Only Markdown files
-are browsed. Images can be added and reordered, but not renamed/moved or deleted through an asset
-manager; pasted assets are staged in memory and are not uploaded until publish. No HTML/PDF export
-yet.
+are browsed; the asset manager handles images only, and renamed/deleted paths are rewritten in
+Markdown but not in other file formats. PDF output comes from the browser print dialog rather than
+a server-side renderer, so pagination depends on the browser.

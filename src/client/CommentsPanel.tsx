@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import type { Comment, CommentAnchor } from '../shared/types'
+import type { Comment, CommentAnchor, ImageTarget } from '../shared/types'
 
 interface Props {
   path: string | null
   comments: Comment[]
   pendingAnchor: CommentAnchor | null
-  onSave: (body: string, author: string, parentId?: string) => void
+  pendingTarget: ImageTarget | null
+  onSave: (body: string, author: string, parentId?: string, target?: ImageTarget) => void
   onCancel: () => void
   onToggleResolved: (id: string) => void
   onDelete: (id: string) => void
@@ -15,6 +16,7 @@ export default function CommentsPanel({
   path,
   comments,
   pendingAnchor,
+  pendingTarget,
   onSave,
   onCancel,
   onToggleResolved,
@@ -33,7 +35,7 @@ export default function CommentsPanel({
   const save = () => {
     if (!body.trim()) return
     rememberAuthor()
-    onSave(body.trim(), author.trim() || 'Reviewer')
+    onSave(body.trim(), author.trim() || 'Reviewer', undefined, pendingTarget ?? undefined)
     setBody('')
   }
 
@@ -45,6 +47,9 @@ export default function CommentsPanel({
     setReplyTo(null)
   }
 
+  const targetLabel = (comment: Comment) =>
+    comment.target?.type === 'image' ? `🖼 ${comment.target.path}` : comment.anchor?.quote
+
   return (
     <aside className="comments-panel">
       <header className="panel-header">
@@ -52,9 +57,11 @@ export default function CommentsPanel({
         <span className="count">{visible.length}</span>
       </header>
 
-      {pendingAnchor && (
+      {(pendingAnchor || pendingTarget) && (
         <div className="composer">
-          <div className="composer-quote">“{pendingAnchor.quote}”</div>
+          <div className="composer-quote">
+            {pendingTarget ? `🖼 ${pendingTarget.path}` : `“${pendingAnchor?.quote}”`}
+          </div>
           <textarea
             autoFocus
             value={body}
@@ -72,12 +79,14 @@ export default function CommentsPanel({
       )}
 
       <div className="comment-list">
-        {roots.length === 0 && !pendingAnchor && (
-          <p className="empty-hint">Select text in the document and click “+ Comment”.</p>
+        {roots.length === 0 && !pendingAnchor && !pendingTarget && (
+          <p className="empty-hint">Select text or click an image, then use “+ Comment”.</p>
         )}
         {roots.map((comment) => (
           <article key={comment.id} className={comment.resolved ? 'comment resolved' : 'comment'}>
-            <blockquote>{comment.anchor.quote}</blockquote>
+            <blockquote className={comment.target ? 'comment-image-target' : undefined}>
+              {targetLabel(comment)}
+            </blockquote>
             <p className="comment-body">{comment.body}</p>
             <div className="comment-meta">
               <span>{comment.author}</span>

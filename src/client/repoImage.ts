@@ -18,6 +18,12 @@ export function clearImagePreviews(): void {
   previews.clear()
 }
 
+/** Reverse lookup so exports can replace temporary blob URLs with repo paths. */
+export function previewToSrc(url: string): string | undefined {
+  for (const [src, preview] of previews) if (preview === url) return src
+  return undefined
+}
+
 /**
  * Markdown keeps repo-relative paths (`assets/photo.png`), but the editor runs
  * on a different origin from the repo. This node leaves `src` untouched for

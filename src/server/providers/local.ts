@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEFAULT_COMMENTS_PATH, serializeComments } from '../../shared/comments'
+import { isImagePath } from '../../shared/assets'
 import type { FileEntry, PublishRequest, PublishResult, RepoSummary } from '../../shared/types'
 import { checkBranch, checkRelativePath, type GitProvider } from './types'
 
@@ -76,6 +77,15 @@ export class LocalGitProvider implements GitProvider {
       .map((entry) => ({ path: entry, type: 'blob' as const }))
   }
 
+  async listAssets(repo: string, ref?: string): Promise<FileEntry[]> {
+    const path = this.repoPath(repo)
+    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ?? 'HEAD'], path)
+    return output
+      .split('\n')
+      .filter(isImagePath)
+      .map((entry) => ({ path: entry, type: 'blob' as const }))
+  }
+
   async readFile(repo: string, path: string, ref?: string): Promise<string | null> {
     const root = this.repoPath(repo)
     if (ref) {
@@ -127,8 +137,14 @@ export class LocalGitProvider implements GitProvider {
         path: checkRelativePath(file.path),
         content: file.content,
         encoding: file.encoding ?? ('utf8' as const),
+        delete: file.delete === true,
       })),
-      { path: commentsPath, content: serializeComments(request.comments), encoding: 'utf8' as const },
+      {
+        path: commentsPath,
+        content: serializeComments(request.comments),
+        encoding: 'utf8' as const,
+        delete: false,
+      },
     ]
     const unique = new Map(changes.map((change) => [change.path, change]))
 
@@ -140,6 +156,10 @@ export class LocalGitProvider implements GitProvider {
 
       for (const [path, change] of unique) {
         const full = inside(worktree, path)
+        if (change.delete) {
+          await rm(full, { force: true })
+          continue
+        }
         await mkdir(dirname(full), { recursive: true })
         await writeFile(
           full,
@@ -147,7 +167,7 @@ export class LocalGitProvider implements GitProvider {
           change.encoding === 'base64' ? undefined : 'utf8',
         )
       }
-      await run('git', ['add', '--', ...unique.keys()], worktree)
+      await run('git', ['add', '-A', '--', ...unique.keys()], worktree)
       await run(
         'git',
         ['-c', 'user.name=Marginalia', '-c', 'user.email=marginalia@localhost', 'commit', '-m', request.commitMessage],

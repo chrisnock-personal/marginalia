@@ -4,12 +4,57 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Comment } from '../shared/types'
 import { resolveAnchor } from './anchors'
+import { repoPathFor } from './assetPaths'
 
 const SET_COMMENTS = 'marginaliaSetComments'
 
-export const commentKey = new PluginKey<{ comments: Comment[]; decorations: DecorationSet }>(
-  'marginaliaComments',
-)
+interface CommentState {
+  comments: Comment[]
+  docPath: string
+  decorations: DecorationSet
+}
+
+interface CommentMeta {
+  comments: Comment[]
+  docPath: string
+}
+
+export const commentKey = new PluginKey<CommentState>('marginaliaComments')
+
+function decorationsFor(comments: Comment[], docPath: string, doc: Parameters<typeof resolveAnchor>[0]): DecorationSet {
+  const decorations: Decoration[] = []
+  // Replies share their parent's target; only root comments get a highlight.
+  const roots = comments.filter((comment) => !comment.parentId)
+
+  for (const comment of roots) {
+    if (comment.anchor) {
+      const range = resolveAnchor(doc, comment.anchor)
+      if (range) {
+        decorations.push(
+          Decoration.inline(range.from, range.to, {
+            class: comment.resolved ? 'comment-mark resolved' : 'comment-mark',
+            'data-comment-id': comment.id,
+          }),
+        )
+      }
+      continue
+    }
+    if (comment.target?.type !== 'image') continue
+    doc.descendants((node, pos) => {
+      if (node.type.name !== 'image') return
+      const src = String(node.attrs.src ?? '')
+      const imagePath = repoPathFor(docPath, src) ?? src
+      if (imagePath !== comment.target?.path && src !== comment.target?.path) return
+      decorations.push(
+        Decoration.node(pos, pos + node.nodeSize, {
+          class: comment.resolved ? 'comment-mark-image resolved' : 'comment-mark-image',
+          'data-comment-id': comment.id,
+        }),
+      )
+    })
+  }
+  return DecorationSet.create(doc, decorations)
+}
 
 export const CommentHighlight = Extension.create({
   name: 'commentHighlight',
@@ -19,26 +64,13 @@ export const CommentHighlight = Extension.create({
       new Plugin({
         key: commentKey,
         state: {
-          init: (): { comments: Comment[]; decorations: DecorationSet } => ({
-            comments: [],
-            decorations: DecorationSet.empty,
-          }),
-          apply(tr, value) {
-            const changed = tr.getMeta(SET_COMMENTS) as Comment[] | undefined
-            const comments = changed ?? value.comments
-            if (!tr.docChanged && !changed) return value
-            // Replies share their parent's anchor; only root comments get a highlight.
-            const marks = comments.filter((comment) => !comment.parentId).flatMap((comment) => {
-              const range = resolveAnchor(tr.doc, comment.anchor)
-              if (!range) return []
-              return [
-                Decoration.inline(range.from, range.to, {
-                  class: comment.resolved ? 'comment-mark resolved' : 'comment-mark',
-                  'data-comment-id': comment.id,
-                }),
-              ]
-            })
-            return { comments, decorations: DecorationSet.create(tr.doc, marks) }
+          init: (): CommentState => ({ comments: [], docPath: '', decorations: DecorationSet.empty }),
+          apply(tr, value): CommentState {
+            const meta = tr.getMeta(SET_COMMENTS) as CommentMeta | undefined
+            const comments = meta?.comments ?? value.comments
+            const docPath = meta?.docPath ?? value.docPath
+            if (!tr.docChanged && !meta) return value
+            return { comments, docPath, decorations: decorationsFor(comments, docPath, tr.doc) }
           },
         },
         props: {
@@ -49,7 +81,8 @@ export const CommentHighlight = Extension.create({
   },
 })
 
-export function setCommentHighlights(editor: Editor | null, comments: Comment[]): void {
+export function setCommentHighlights(editor: Editor | null, comments: Comment[], docPath: string): void {
   if (!editor || editor.isDestroyed) return
-  editor.view.dispatch(editor.state.tr.setMeta(SET_COMMENTS, comments))
+  const meta: CommentMeta = { comments, docPath }
+  editor.view.dispatch(editor.state.tr.setMeta(SET_COMMENTS, meta))
 }

@@ -3,13 +3,16 @@ import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { TableKit } from '@tiptap/extension-table'
 import { useEffect, useRef, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react'
-import type { Comment, CommentAnchor } from '../shared/types'
+import type { Editor as TiptapEditor } from '@tiptap/react'
+import type { Comment, CommentAnchor, ImageTarget } from '../shared/types'
 import { anchorFromSelection } from './anchors'
+import { repoPathFor } from './assetPaths'
 import { CommentHighlight, setCommentHighlights } from './commentHighlight'
 import RepoImage, { clearImagePreviews, setImagePreview } from './repoImage'
 
 interface Props {
   documentKey: string
+  docPath: string
   markdown: string
   comments: Comment[]
   /** Resolve repo-relative image paths for display. */
@@ -17,7 +20,9 @@ interface Props {
   /** Called when an image is pasted/dropped/selected; App stages the bytes for the PR. */
   onAsset: (file: File, src: string) => void
   onChange: (markdown: string) => void
-  onAddComment: (anchor: CommentAnchor | null) => void
+  /** Exactly one of anchor/target is supplied. */
+  onAddComment: (anchor: CommentAnchor | null, target?: ImageTarget) => void
+  onEditorReady?: (editor: TiptapEditor | null) => void
 }
 
 function safeFilename(name: string): string {
@@ -27,17 +32,19 @@ function safeFilename(name: string): string {
 
 export default function Editor({
   documentKey,
+  docPath,
   markdown,
   comments,
   resolveSrc,
   onAsset,
   onChange,
   onAddComment,
+  onEditorReady,
 }: Props) {
   // Callbacks change on every render; the editor reads the latest via a ref so
   // it need not be recreated on each keystroke.
-  const callbacks = useRef({ resolveSrc, onAsset, onChange, onAddComment })
-  callbacks.current = { resolveSrc, onAsset, onChange, onAddComment }
+  const callbacks = useRef({ resolveSrc, onAsset, onChange, onAddComment, onEditorReady })
+  callbacks.current = { resolveSrc, onAsset, onChange, onAddComment, onEditorReady }
   const fileInput = useRef<HTMLInputElement>(null)
 
   const editor = useEditor(
@@ -62,20 +69,29 @@ export default function Editor({
   // editor state the toolbar depends on.
   const state = useEditorState({
     editor,
-    selector: ({ editor: current }) => ({
-      selectionEmpty: current.state.selection.empty,
-      bold: current.isActive('bold'),
-      italic: current.isActive('italic'),
-      heading: current.isActive('heading', { level: 2 }),
-      bullet: current.isActive('bulletList'),
-      ordered: current.isActive('orderedList'),
-      quote: current.isActive('blockquote'),
-      codeBlock: current.isActive('codeBlock'),
-      table: current.isActive('table'),
-    }),
+    selector: ({ editor: current }) => {
+      const selected = current.state.doc.nodeAt(current.state.selection.from)
+      return {
+        selectionEmpty: current.state.selection.empty,
+        selectedImageSrc: selected?.type.name === 'image' ? String(selected.attrs.src ?? '') : null,
+        bold: current.isActive('bold'),
+        italic: current.isActive('italic'),
+        heading: current.isActive('heading', { level: 2 }),
+        bullet: current.isActive('bulletList'),
+        ordered: current.isActive('orderedList'),
+        quote: current.isActive('blockquote'),
+        codeBlock: current.isActive('codeBlock'),
+        table: current.isActive('table'),
+      }
+    },
   })
 
   useEffect(() => () => clearImagePreviews(), [documentKey])
+
+  useEffect(() => {
+    callbacks.current.onEditorReady?.(editor)
+    return () => callbacks.current.onEditorReady?.(null)
+  }, [editor])
 
   // Load a new document (or a reload after a conflict). Typing is a no-op here:
   // the prop already equals what the editor produced in onUpdate.
@@ -86,8 +102,8 @@ export default function Editor({
   }, [documentKey, editor, markdown])
 
   useEffect(() => {
-    setCommentHighlights(editor, comments)
-  }, [editor, comments])
+    setCommentHighlights(editor, comments, docPath)
+  }, [editor, comments, docPath])
 
   if (!editor) return null
 
@@ -103,6 +119,14 @@ export default function Editor({
   )
 
   const addComment = () => {
+    if (state?.selectedImageSrc) {
+      const src = state.selectedImageSrc
+      onAddComment(null, {
+        type: 'image',
+        path: repoPathFor(docPath, src) ?? src,
+      })
+      return
+    }
     const { from, to } = editor.state.selection
     onAddComment(anchorFromSelection(editor.state.doc, from, to))
   }
@@ -189,7 +213,13 @@ export default function Editor({
         {tool('↶', () => editor.chain().focus().undo().run(), false, 'Undo')}
         {tool('↷', () => editor.chain().focus().redo().run(), false, 'Redo')}
         <span className="toolbar-divider" />
-        <button type="button" className="tool tool-comment" onClick={addComment} disabled={state?.selectionEmpty ?? true}>
+        <button
+          type="button"
+          className="tool tool-comment"
+          onClick={addComment}
+          disabled={state ? state.selectionEmpty && !state.selectedImageSrc : true}
+          title={state?.selectedImageSrc ? 'Comment on this image' : 'Comment on selected text'}
+        >
           + Comment
         </button>
       </div>

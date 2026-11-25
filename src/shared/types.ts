@@ -37,10 +37,19 @@ export interface CommentAnchor {
   end: number
 }
 
+/** A comment attached to an image rather than a text range. */
+export interface ImageTarget {
+  type: 'image'
+  /** Repo-relative path of the image, e.g. docs/assets/photo.png. */
+  path: string
+}
+
 export interface Comment {
   id: string
   path: string
-  anchor: CommentAnchor
+  /** Text comments carry an anchor; image comments carry `target` instead. */
+  anchor?: CommentAnchor
+  target?: ImageTarget
   body: string
   author: string
   createdAt: string
@@ -59,6 +68,8 @@ export interface FileChange {
   content: string
   /** base64 for binary assets such as pasted images; defaults to utf8. */
   encoding?: 'utf8' | 'base64'
+  /** Remove this path in the published branch; content is ignored. */
+  delete?: boolean
 }
 
 export interface PublishRequest {

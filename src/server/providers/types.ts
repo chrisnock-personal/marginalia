@@ -11,6 +11,7 @@ export interface GitProvider {
   readonly id: ProviderId
   listRepos(): Promise<RepoSummary[]>
   listMarkdownFiles(repo: string, ref?: string): Promise<FileEntry[]>
+  listAssets(repo: string, ref?: string): Promise<FileEntry[]>
   /** null when the file does not exist on that ref. */
   readFile(repo: string, path: string, ref?: string): Promise<string | null>
   /** Binary asset (images) for rendering; null when absent. */

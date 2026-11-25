@@ -10,9 +10,9 @@ no database and keeps no server-side copy of documents.
 
 | Component | Location | Responsibility |
 |---|---|---|
-| React client | `src/client/` | Repo/file browsing, TipTap editor, comment composer and panel, publish dialog, PAT dialog |
+| React client | `src/client/` | Repo/file browsing, TipTap editor, comments panel, asset manager, HTML export, publish and PAT dialogs |
 | API server | `src/server/` | Express JSON API, provider selection, token state |
-| Git provider interface | `src/server/providers/types.ts` | `listRepos`, `listMarkdownFiles`, `readFile`, `readAsset`, `headSha`, `publish` |
+| Git provider interface | `src/server/providers/types.ts` | `listRepos`, `listMarkdownFiles`, `listAssets`, `readFile`, `readAsset`, `headSha`, `publish` |
 | Local provider | `src/server/providers/local.ts` | Reads working tree, publishes via a temporary git worktree |
 | GitHub provider | `src/server/providers/github.ts` | GitHub REST: contents, trees, blobs, commits, refs, PRs |
 | Shared models | `src/shared/` | API types and `comments.json` validation/serialization |
@@ -21,12 +21,15 @@ no database and keeps no server-side copy of documents.
 
 ```
 provider + repo + file ──► GET file ──► Markdown ──► TipTap (StarterKit + TableKit + image)
-                        ├─► GET comments.json ──► anchors ──► ProseMirror decorations
+                        ├─► GET comments.json ──► anchors / image targets ──► decorations
                         ├─► GET head ──► base SHA
+                        ├─► GET assets ──► asset manager
                         └─► GET asset ──► repo-relative images for display
-selection ──► CommentAnchor { quote, prefix, suffix, start, end } ──► comments.json in memory
+selection / image click ──► CommentAnchor or ImageTarget ──► comments.json in memory
 paste/drop image ──► base64 FileChange + object-URL preview ──► staged asset
-Publish ──► POST /publish { base SHA, files (+ base64 assets), comments, branch, commit, PR }
+rename/move/delete ──► rewrite Markdown references in every file ──► docEdits + asset FileChanges
+Export ──► editor HTML + print CSS ──► new tab → browser Print / Save as PDF
+Publish ──► POST /publish { base SHA, files (+ base64/deleted assets), comments, branch, commit, PR }
         ──► conflict check ──► git provider ──► branch + PR
 ```
 
@@ -45,10 +48,12 @@ ProseMirror position. `resolveAnchor` tries the stored offsets, then the prefix+
 context, then a plain quote search. A comment whose text was deleted stays in the sidebar but
 becomes unhighlighted; it is not silently dropped from `comments.json`.
 
-`src/client/commentHighlight.ts` is a ProseMirror plugin that rebuilds inline decorations whenever
-the comment list or document changes. Replies carry a `parentId` pointing at a root comment and
-reuse its anchor; only root comments are highlighted, and resolving or deleting a root applies to
-its replies.
+`src/client/commentHighlight.ts` is a ProseMirror plugin that rebuilds decorations whenever the
+comment list or document changes. Image comments use an `ImageTarget` (`{ type: 'image', path }`)
+instead of a text anchor: the plugin finds image nodes whose `src` resolves to that repo path and
+adds a node decoration. Replies carry a `parentId` pointing at a root comment and reuse its anchor
+or target; only root comments are highlighted, and resolving or deleting a root applies to its
+replies. Renaming an image updates targets in `comments.json`; deleting it removes the comment.
 
 ## Publishing
 
@@ -58,10 +63,12 @@ request. The server compares it with the current head before writing anything; a
 to the base branch triggers it) but prevents silently overwriting newer work. A three-way merge is
 future work.
 
-Both providers produce one branch and one commit containing the changed Markdown files, any staged
-image assets and `comments.json` (always written, so removing the last comment is also publishable).
-`FileChange.encoding: 'base64'` marks binary assets: the local provider decodes before writing and
-the GitHub provider passes the base64 straight to the blobs API.
+Both providers produce one branch and one commit containing the changed Markdown files (including
+cross-file reference rewrites), staged/deleted image assets and `comments.json` (always written, so
+removing the last comment is also publishable). `FileChange.encoding: 'base64'` marks binary assets:
+the local provider decodes before writing and the GitHub provider passes the base64 straight to the
+blobs API. `FileChange.delete: true` removes a path: `rm` in the local worktree, `sha: null` in the
+GitHub tree API.
 
 - **Local**: create a detached worktree from the base ref in a temp dir, create a new branch there,
   write the files, commit with an explicit identity, push to `origin`, then use `gh pr create` when
@@ -81,6 +88,17 @@ registers `TableKit` (GFM tables with row/column commands) and a customised `Ima
 `GET /repos/:provider/:repo/asset`. Images pasted, dropped or chosen from disk are read as base64,
 staged in `assets/` beside the document with a generated filename, inserted into the editor and
 previewed from an object URL until publish. Reordering an image is just moving its Markdown node.
+
+The **Assets** dialog lists images from the base ref plus images staged in this session. Renaming or
+moving reads the bytes from `GET /asset` (or from the staged base64), writes a new `FileChange` at
+the destination, marks the old path for deletion when it exists in the base, and rewrites all
+Markdown references via `src/client/assetPaths.ts`. Inline links, images, reference definitions and
+raw `<img>` tags are supported; deletion removes image embeds and turns links into plain text. The
+rewritten Markdown for other files is held in `docEdits` and published with the current document.
+
+`src/client/export.ts` builds a standalone HTML document from `editor.getHTML()`, with absolute
+image URLs and print CSS, including an optional comments appendix. The UI opens it in a new tab and
+calls `print()` so the user can choose **Save as PDF**; the same HTML can be downloaded directly.
 
 ## Auth
 
@@ -110,8 +128,8 @@ need per-user sessions and scoped tokens.
 - Per-user sessions and scoped tokens for a multi-user deployment.
 - File-level three-way merges instead of branch-level conflict detection.
 - Notifications and a filter for resolved comments.
-- HTML/PDF export from the editor and from stored Markdown.
-- Multi-file editing with per-file comments and an asset manager (rename/move/delete images).
-- Path-based comment anchors for images and other non-text nodes.
+- Server-side HTML/PDF export from stored Markdown, with deterministic pagination.
+- Multi-file editing with per-file comments and an asset manager for non-image files.
+- Path-based comment anchors for non-text nodes other than images.
 - Persisting drafts and comment anchors in a stable sidecar format based on markdown source offsets.
 - Rendering comment markers in the Markdown source view as well as in the WYSIWYG view.

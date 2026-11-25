@@ -90,6 +90,12 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
     res.json(await provider.listMarkdownFiles(req.params.repo, ref))
   })
 
+  router.get('/repos/:provider/:repo/assets', async (req, res) => {
+    const provider = providerFor(req.params.provider, config, tokens)
+    const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined
+    res.json(await provider.listAssets(req.params.repo, ref))
+  })
+
   router.get('/repos/:provider/:repo/file', async (req, res) => {
     const path = typeof req.query.path === 'string' ? req.query.path : ''
     if (!path) throw new HttpError(400, 'path is required')
@@ -130,7 +136,8 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
         (f) =>
           typeof f?.path === 'string' &&
           typeof f?.content === 'string' &&
-          (f.encoding === undefined || f.encoding === 'utf8' || f.encoding === 'base64'),
+          (f.encoding === undefined || f.encoding === 'utf8' || f.encoding === 'base64') &&
+          (f.delete === undefined || typeof f.delete === 'boolean'),
       ) ||
       !body.comments ||
       body.comments.version !== 1 ||

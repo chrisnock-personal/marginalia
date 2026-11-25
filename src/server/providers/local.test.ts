@@ -16,13 +16,14 @@ test('local provider reads files and publishes a branch with comments.json', asy
     const remote = join(dir, 'remote.git')
     const repo = join(dir, 'repo')
     mkdirSync(remote)
-    mkdirSync(join(repo, 'docs'), { recursive: true })
+    mkdirSync(join(repo, 'docs', 'assets'), { recursive: true })
     git(['init', '--bare', '--initial-branch=main'], remote)
     git(['init', '--initial-branch=main'], repo)
     git(['config', 'user.name', 'Test'], repo)
     git(['config', 'user.email', 'test@localhost'], repo)
     writeFileSync(join(repo, 'README.md'), '# Test repo\n')
-    writeFileSync(join(repo, 'docs', 'guide.md'), '# Guide\n\nOriginal text.\n')
+    writeFileSync(join(repo, 'docs', 'guide.md'), '# Guide\n\n![Demo](assets/old.png)\n')
+    writeFileSync(join(repo, 'docs', 'assets', 'old.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
     git(['add', '.'], repo)
     git(['commit', '-m', 'initial'], repo)
     git(['remote', 'add', 'origin', remote], repo)
@@ -31,7 +32,8 @@ test('local provider reads files and publishes a branch with comments.json', asy
     assert.equal((await provider.listRepos())[0]?.defaultBranch, 'main')
     assert.equal(await provider.headSha('test', 'main'), git(['rev-parse', 'HEAD'], repo))
     assert.ok((await provider.listMarkdownFiles('test')).some((f) => f.path === 'docs/guide.md'))
-    assert.match((await provider.readFile('test', 'docs/guide.md')) ?? '', /Original text/)
+    assert.match((await provider.readFile('test', 'docs/guide.md')) ?? '', /assets\/old\.png/)
+    assert.deepEqual((await provider.listAssets('test')).map((asset) => asset.path), ['docs/assets/old.png'])
     assert.equal(await provider.readAsset('test', 'docs/assets/missing.png'), null)
 
     const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
@@ -41,8 +43,9 @@ test('local provider reads files and publishes a branch with comments.json', asy
       branch: 'marginalia/test-edit',
       commitMessage: 'Edit guide',
       files: [
-        { path: 'docs/guide.md', content: '# Guide\n\nChanged text.\n' },
+        { path: 'docs/guide.md', content: '# Guide\n\nChanged text.\n\n![Demo](assets/pic.png)\n' },
         { path: 'docs/assets/pic.png', content: png.toString('base64'), encoding: 'base64' },
+        { path: 'docs/assets/old.png', content: '', delete: true },
       ],
       comments: {
         version: 1,
@@ -54,6 +57,15 @@ test('local provider reads files and publishes a branch with comments.json', asy
             body: 'Check this sentence',
             author: 'Chris',
             createdAt: '2026-11-24T10:00:00.000Z',
+            resolved: false,
+          },
+          {
+            id: 'c_image',
+            path: 'docs/guide.md',
+            target: { type: 'image', path: 'docs/assets/pic.png' },
+            body: 'Is this the right image?',
+            author: 'Chris',
+            createdAt: '2026-11-25T10:00:00.000Z',
             resolved: false,
           },
         ],
@@ -74,9 +86,14 @@ test('local provider reads files and publishes a branch with comments.json', asy
       Buffer.compare((await provider.readAsset('test', 'docs/assets/pic.png', 'marginalia/test-edit')) ?? Buffer.alloc(0), png),
       0,
     )
+    assert.throws(
+      () => git(['cat-file', '-e', 'marginalia/test-edit:docs/assets/old.png'], remote),
+      'deleted asset must not exist in the published branch',
+    )
     const comments = JSON.parse(git(['show', 'marginalia/test-edit:comments.json'], remote))
     assert.equal(comments.comments[0].body, 'Check this sentence')
-    assert.match(readFileSync(join(repo, 'docs', 'guide.md'), 'utf8'), /Original text/)
+    assert.equal(comments.comments[1].target.path, 'docs/assets/pic.png')
+    assert.match(readFileSync(join(repo, 'docs', 'guide.md'), 'utf8'), /assets\/old\.png/)
     assert.equal(git(['status', '--porcelain'], repo), '')
     assert.equal(git(['worktree', 'list'], repo).split('\n').length, 1)
   } finally {

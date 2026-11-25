@@ -85,6 +85,14 @@ Read a file. Returns `{ "path": "docs/guide.md", "content": "# Guide\n..." }`; `
 Return the raw bytes of a repo asset (images) with an appropriate `Content-Type`. `404` if absent.
 Used by the editor to display repo-relative Markdown images.
 
+## `GET /repos/:provider/:repo/assets?ref=<optional>`
+
+List image files in the repo (`png`, `jpg`, `gif`, `webp`, `svg`, `avif`, `bmp`, `ico`).
+
+```json
+[{ "path": "docs/assets/pic.png", "type": "blob" }]
+```
+
 ## `POST /publish`
 
 Create a branch, commit and PR.
@@ -99,7 +107,8 @@ Create a branch, commit and PR.
   "commitMessage": "Edit guide.md",
   "files": [
     { "path": "docs/guide.md", "content": "# Updated guide\n" },
-    { "path": "docs/assets/pic.png", "content": "iVBORw0KGg==", "encoding": "base64" }
+    { "path": "docs/assets/pic.png", "content": "iVBORw0KGg==", "encoding": "base64" },
+    { "path": "docs/assets/old.png", "content": "", "delete": true }
   ],
   "comments": {
     "version": 1,
@@ -110,10 +119,13 @@ Create a branch, commit and PR.
 ```
 
 `files` may be empty when only comments changed; `encoding` defaults to `utf8`, while `base64` is
-for binary assets such as pasted images. `baseSha` is optional; when supplied and different
-from the current head, the request fails with `409` and `{ "error": "Base branch changed …" }`.
-Replies in `comments` add `"parentId": "<root comment id>"`. `commentsPath` defaults to
-`comments.json`. `pr` is optional; without it the branch is pushed but no PR is opened.
+for binary assets such as pasted images. `"delete": true` removes a path in the published branch
+(the GitHub provider sends a tree entry with `sha: null`). `baseSha` is optional; when supplied and
+different from the current head, the request fails with `409` and `{ "error": "Base branch changed
+…" }`. Comments carry either a text `anchor` or an image `target`:
+`{ "type": "image", "path": "docs/assets/pic.png" }`. Replies add `"parentId": "<root comment id>"`.
+`commentsPath` defaults to `comments.json`. `pr` is optional; without it the branch is pushed but
+no PR is opened.
 
 ```json
 {

@@ -1,5 +1,6 @@
 import type { FileEntry, PublishRequest, PublishResult, RepoSummary } from '../../shared/types'
 import { DEFAULT_COMMENTS_PATH, serializeComments } from '../../shared/comments'
+import { isImagePath } from '../../shared/assets'
 import { checkBranch, checkRelativePath, type GitProvider } from './types'
 
 interface GitHubRepo {
@@ -131,6 +132,17 @@ export class GitHubProvider implements GitProvider {
       .map((entry) => ({ path: entry.path, type: 'blob' as const }))
   }
 
+  async listAssets(repo: string, ref?: string): Promise<FileEntry[]> {
+    const base = `/repos/${GitHubProvider.encoded(repo)}`
+    const branch = ref ?? (await this.defaultBranch(repo))
+    const tree = await this.api<{ tree: GitHubTreeEntry[] }>(
+      `${base}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+    )
+    return tree.tree
+      .filter((entry) => entry.type === 'blob' && isImagePath(entry.path))
+      .map((entry) => ({ path: entry.path, type: 'blob' as const }))
+  }
+
   async readFile(repo: string, path: string, ref?: string): Promise<string | null> {
     const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
     return this.raw(
@@ -165,16 +177,26 @@ export class GitHubProvider implements GitProvider {
           path: checkRelativePath(file.path),
           content: file.content,
           encoding: file.encoding ?? ('utf8' as const),
+          delete: file.delete === true,
         })),
-        { path: commentsPath, content: serializeComments(request.comments), encoding: 'utf8' as const },
+        {
+          path: commentsPath,
+          content: serializeComments(request.comments),
+          encoding: 'utf8' as const,
+          delete: false,
+        },
       ].map((change) => [change.path, change]),
     )
 
     const baseSha = await this.headSha(request.repo, baseRef)
     const commit = await this.api<CommitResponse>(`${base}/git/commits/${baseSha}`)
 
-    const entries: Array<{ path: string; mode: string; type: string; sha: string }> = []
+    const entries: Array<{ path: string; mode: string; type: string; sha: string | null }> = []
     for (const [path, change] of changes) {
+      if (change.delete) {
+        entries.push({ path, mode: '100644', type: 'blob', sha: null })
+        continue
+      }
       const content = change.encoding === 'base64'
         ? change.content
         : Buffer.from(change.content, 'utf8').toString('base64')

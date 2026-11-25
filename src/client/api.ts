@@ -52,6 +52,23 @@ export const api = {
   files: (provider: ProviderId, repo: string) =>
     request<FileEntry[]>(`${repoPath(provider, repo)}/files`),
 
+  assets: (provider: ProviderId, repo: string, ref?: string) =>
+    request<FileEntry[]>(
+      `${repoPath(provider, repo)}/assets${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`,
+    ),
+
+  /** Read raw asset bytes as base64, for moving/renaming an existing image. */
+  async assetBase64(provider: ProviderId, repo: string, assetPath: string, ref?: string): Promise<string> {
+    const response = await fetch(api.assetSrc(provider, repo, assetPath, ref))
+    if (!response.ok) throw new Error(`Could not read asset ${assetPath} (HTTP ${response.status})`)
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    }
+    return btoa(binary)
+  },
+
   file: (provider: ProviderId, repo: string, path: string) =>
     request<{ path: string; content: string }>(
       `${repoPath(provider, repo)}/file?path=${encodeURIComponent(path)}`,

@@ -1,19 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { Editor as TiptapEditor } from '@tiptap/react'
 import { emptyComments, newCommentId } from '../shared/comments'
 import type {
   Comment,
   CommentAnchor,
   FileChange,
   FileEntry,
+  ImageTarget,
   ProviderId,
   ProviderInfo,
   PublishResult,
   RepoSummary,
 } from '../shared/types'
 import { api } from './api'
+import AssetDialog, { type AssetView } from './AssetDialog'
+import { relativeSrcFor, repoPathFor, rewriteReferences } from './assetPaths'
 import CommentsPanel from './CommentsPanel'
 import Editor from './Editor'
+import { buildExportHtml, downloadHtml, printHtml } from './export'
+import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
+import { previewToSrc, setImagePreview } from './repoImage'
 import PublishDialog from './PublishDialog'
 
 export default function App() {
@@ -26,8 +33,11 @@ export default function App() {
   const [original, setOriginal] = useState('')
   const [markdown, setMarkdown] = useState('')
   const [assets, setAssets] = useState<FileChange[]>([])
+  const [repoAssets, setRepoAssets] = useState<FileEntry[]>([])
+  const [docEdits, setDocEdits] = useState<Record<string, string>>({})
   const [comments, setComments] = useState(emptyComments().comments)
   const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null)
+  const [pendingTarget, setPendingTarget] = useState<ImageTarget | null>(null)
   const [baseSha, setBaseSha] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const [loadingFile, setLoadingFile] = useState(false)
@@ -39,7 +49,11 @@ export default function App() {
   const [publishConflict, setPublishConflict] = useState(false)
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
   const [patOpen, setPatOpen] = useState(false)
+  const [assetOpen, setAssetOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [branch, setBranch] = useState('marginalia/edit')
+  const editorRef = useRef<TiptapEditor | null>(null)
+  const baseMarkdown = useRef<Record<string, string>>({})
   const baseRef = repos.find((repo) => repo.id === repoId)?.defaultBranch
 
   const refreshConfig = async () => {
@@ -72,6 +86,9 @@ export default function App() {
     setFiles([])
     setPath('')
     setAssets([])
+    setRepoAssets([])
+    setDocEdits({})
+    baseMarkdown.current = {}
     setPublishResult(null)
     const info = config.find((p) => p.id === provider)
     if (!info?.configured) return
@@ -85,11 +102,18 @@ export default function App() {
   useEffect(() => {
     if (!repoId) return
     let cancelled = false
+    setFiles([])
+    setRepoAssets([])
+    setDocEdits({})
+    baseMarkdown.current = {}
     api.files(provider, repoId)
       .then((result) => { if (!cancelled) setFiles(result) })
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
+    api.assets(provider, repoId, baseRef)
+      .then((result) => { if (!cancelled) setRepoAssets(result) })
+      .catch((err: Error) => { if (!cancelled) setError(err.message) })
     return () => { cancelled = true }
-  }, [provider, repoId])
+  }, [provider, repoId, baseRef, reloadKey])
 
   useEffect(() => {
     if (!repoId || !path) return
@@ -97,6 +121,7 @@ export default function App() {
     setLoadingFile(true)
     setError(null)
     setPendingAnchor(null)
+    setPendingTarget(null)
     Promise.all([
       api.file(provider, repoId, path),
       api.comments(provider, repoId),
@@ -125,9 +150,8 @@ export default function App() {
   /** Show repo-relative images from the current branch/asset endpoint. */
   const resolveSrc = (src: string): string => {
     if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(src)) return src
-    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : ''
-    const resolved = new URL(src, `https://marginalia.local/${dir}`).pathname.slice(1)
-    return api.assetSrc(provider, repoId, resolved, baseRef)
+    const resolved = repoPathFor(path, src)
+    return resolved ? api.assetSrc(provider, repoId, resolved, baseRef) : src
   }
 
   /** Stage pasted/dropped image bytes so they travel in the same PR. */
@@ -142,6 +166,109 @@ export default function App() {
       setNotice(`Staged ${file.name} — it will be added to the PR`)
     }
     reader.readAsDataURL(file)
+  }
+
+  /** Base Markdown for all files, cached until a reload/publish. */
+  const loadBaseMarkdown = async (): Promise<Record<string, string>> => {
+    if (Object.keys(baseMarkdown.current).length) return baseMarkdown.current
+    const entries = files.length ? files : await api.files(provider, repoId)
+    const pairs = await Promise.all(entries.map(async (entry) =>
+      [entry.path, (await api.file(provider, repoId, entry.path)).content] as const,
+    ))
+    baseMarkdown.current = Object.fromEntries(pairs)
+    return baseMarkdown.current
+  }
+
+  /** Apply an image rename/delete to every Markdown file that references it. */
+  const rewriteAllReferences = async (oldPath: string, newPath: string | null) => {
+    const base = await loadBaseMarkdown()
+    const updates: Record<string, string> = {}
+    const removed: string[] = []
+    let currentFileUpdate: string | undefined
+    for (const filePath of Object.keys(base)) {
+      const current = filePath === path ? markdown : docEdits[filePath] ?? base[filePath]
+      const next = rewriteReferences(current, filePath, oldPath, newPath)
+      if (next === current) continue
+      if (filePath === path) {
+        currentFileUpdate = next
+      } else if (next === base[filePath]) {
+        removed.push(filePath)
+      } else {
+        updates[filePath] = next
+      }
+    }
+    if (currentFileUpdate !== undefined) setMarkdown(currentFileUpdate)
+    if (Object.keys(updates).length || removed.length) {
+      setDocEdits((previous) => {
+        const next = { ...previous, ...updates }
+        for (const key of removed) delete next[key]
+        return next
+      })
+    }
+  }
+
+  const checkAssetPath = (value: string): string => {
+    const cleaned = value.trim().replace(/^\.\//, '')
+    if (!cleaned || cleaned.startsWith('/') || /\\/.test(cleaned) ||
+        cleaned.split('/').some((part) => !part || part === '.' || part === '..')) {
+      throw new Error('Enter a repo-relative path such as docs/assets/photo.png')
+    }
+    return cleaned
+  }
+
+  const assetBytes = async (assetPath: string): Promise<string> => {
+    const staged = assets.find((asset) => asset.path === assetPath && !asset.delete)
+    if (staged?.encoding === 'base64') return staged.content
+    return api.assetBase64(provider, repoId, assetPath, baseRef)
+  }
+
+  const renameAsset = async (oldPath: string, rawNewPath: string) => {
+    try {
+      const newPath = checkAssetPath(rawNewPath)
+      if (newPath === oldPath) return
+      if (assets.some((asset) => asset.path === newPath && !asset.delete)) {
+        throw new Error(`An image already exists at ${newPath}`)
+      }
+      const bytesBase64 = await assetBytes(oldPath)
+      const wasRepoAsset = repoAssets.some((asset) => asset.path === oldPath)
+      await rewriteAllReferences(oldPath, newPath)
+      // The new path is not in the base ref yet; preview the moved bytes locally.
+      const bytes = Uint8Array.from(atob(bytesBase64), (char) => char.charCodeAt(0))
+      setImagePreview(relativeSrcFor(path, newPath), URL.createObjectURL(new Blob([bytes])))
+      setAssets((current) => {
+        const rest = current.filter((asset) => asset.path !== oldPath && asset.path !== newPath)
+        const moved: FileChange = { path: newPath, content: bytesBase64, encoding: 'base64' }
+        if (!wasRepoAsset || current.some((asset) => asset.path === oldPath && asset.delete)) {
+          return [...rest, moved]
+        }
+        return [...rest, moved, { path: oldPath, content: '', delete: true }]
+      })
+      setComments((current) => current.map((comment) =>
+        comment.target?.path === oldPath
+          ? { ...comment, target: { ...comment.target, path: newPath } }
+          : comment,
+      ))
+      setNotice(`Moved ${oldPath} → ${newPath}; Markdown references updated`)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  const deleteAsset = async (assetPath: string) => {
+    if (!window.confirm(`Delete ${assetPath} and remove its image embeds in the published PR?`)) return
+    try {
+      const wasRepoAsset = repoAssets.some((asset) => asset.path === assetPath)
+      await rewriteAllReferences(assetPath, null)
+      setAssets((current) => {
+        const rest = current.filter((asset) => asset.path !== assetPath)
+        if (!wasRepoAsset || current.some((asset) => asset.path === assetPath && asset.delete)) return rest
+        return [...rest, { path: assetPath, content: '', delete: true }]
+      })
+      setComments((current) => current.filter((comment) => comment.target?.path !== assetPath))
+      setNotice(`Deleted ${assetPath}; image embeds removed from Markdown`)
+    } catch (err) {
+      setError((err as Error).message)
+    }
   }
 
   const openPublish = () => {
@@ -165,6 +292,7 @@ export default function App() {
         commitMessage: values.commitMessage,
         files: [
           ...(markdown === original ? [] : [{ path, content: markdown }]),
+          ...Object.entries(docEdits).map(([filePath, content]) => ({ path: filePath, content })),
           ...assets,
         ],
         comments: { version: 1, comments },
@@ -173,6 +301,8 @@ export default function App() {
       setPublishResult(result)
       setOriginal(markdown)
       setAssets([])
+      setDocEdits({})
+      baseMarkdown.current = {}
       setPublishOpen(false)
     } catch (err) {
       const message = (err as Error).message
@@ -183,17 +313,18 @@ export default function App() {
     }
   }
 
-  const saveComment = (body: string, author: string, parentId?: string) => {
-    const anchor = parentId
-      ? comments.find((comment) => comment.id === parentId)?.anchor
-      : pendingAnchor
-    if (!anchor || !path) return
+  const saveComment = (body: string, author: string, parentId?: string, target?: ImageTarget) => {
+    const parent = parentId ? comments.find((comment) => comment.id === parentId) : undefined
+    const anchor = parentId ? parent?.anchor : pendingAnchor
+    const imageTarget = parentId ? parent?.target : target
+    if (!anchor && !imageTarget) return
     setComments([
       ...comments,
       {
         id: newCommentId(),
         path,
-        anchor,
+        ...(anchor ? { anchor } : {}),
+        ...(imageTarget ? { target: imageTarget } : {}),
         parentId,
         body,
         author,
@@ -201,7 +332,8 @@ export default function App() {
         resolved: false,
       },
     ])
-    if (!parentId) setPendingAnchor(null)
+    setPendingAnchor(null)
+    setPendingTarget(null)
   }
 
   const toggleResolved = (id: string) => {
@@ -220,12 +352,41 @@ export default function App() {
   const reloadFile = () => {
     setPublishOpen(false)
     setAssets([])
+    setDocEdits({})
+    baseMarkdown.current = {}
     setReloadKey((key) => key + 1)
+  }
+
+  const exportHtml = (includeComments: boolean): string => {
+    // Editor HTML uses local preview URLs for staged/moved images; exports need
+    // a URL that still resolves after the HTML is downloaded or printed.
+    const html = (editorRef.current?.getHTML() ?? '').replace(
+      /(<img\b[^>]*\bsrc\s*=\s*)(["'])(blob:[^"']+)\2/gi,
+      (full, prefix: string, quote: string, url: string) => {
+        const src = previewToSrc(url)
+        const repoPath = src ? repoPathFor(path, src) : null
+        return repoPath
+          ? `${prefix}${quote}${api.assetSrc(provider, repoId, repoPath, baseRef)}${quote}`
+          : full
+      },
+    )
+    return buildExportHtml({
+      title: path,
+      html,
+      comments: comments.filter((comment) => comment.path === path),
+      includeComments,
+    })
   }
 
   const github = config.find((p) => p.id === 'github')
   const anyConfigured = config.some((p) => p.configured)
-  const dirty = markdown !== original || assets.length > 0
+  const dirty = markdown !== original || assets.length > 0 || Object.keys(docEdits).length > 0
+  const assetPaths = [...new Set([...repoAssets.map((asset) => asset.path), ...assets.map((asset) => asset.path)])]
+  const assetViews: AssetView[] = assetPaths.map((assetPath) => ({
+    path: assetPath,
+    staged: assets.some((asset) => asset.path === assetPath && !asset.delete && asset.encoding === 'base64'),
+    deleted: assets.some((asset) => asset.path === assetPath && asset.delete),
+  }))
 
   return (
     <div className="app">
@@ -298,10 +459,16 @@ export default function App() {
                   <h2>{path}</h2>
                   <span className="muted">
                     {dirty ? 'Unpublished edits' : 'No local edits'} · {comments.filter((c) => c.path === path).length} comment(s)
-                    {assets.length > 0 && ` · ${assets.length} image${assets.length === 1 ? '' : 's'} staged`}
+                    {assets.length > 0 && ` · ${assets.length} file change(s) staged`}
                   </span>
                 </div>
-                <button type="button" className="primary" onClick={openPublish}>Publish PR</button>
+                <div className="doc-actions">
+                  <button type="button" onClick={() => setExportOpen(true)}>Export</button>
+                  <button type="button" onClick={() => setAssetOpen(true)}>
+                    Assets ({assetViews.length})
+                  </button>
+                  <button type="button" className="primary" onClick={openPublish}>Publish PR</button>
+                </div>
               </div>
               {loadingFile && <p className="muted">Loading document…</p>}
               {publishResult && (
@@ -313,21 +480,23 @@ export default function App() {
               )}
               <Editor
                 documentKey={`${provider}/${repoId}/${path}/${reloadKey}`}
+                docPath={path}
                 markdown={markdown}
                 comments={comments}
                 resolveSrc={resolveSrc}
                 onAsset={stageAsset}
                 onChange={setMarkdown}
-                onAddComment={(anchor) => {
-                  if (!anchor) setError('Select some text before adding a comment')
-                  else { setError(null); setPendingAnchor(anchor) }
+                onEditorReady={(instance) => { editorRef.current = instance }}
+                onAddComment={(anchor, target) => {
+                  if (!anchor && !target) setError('Select some text or click an image before adding a comment')
+                  else { setError(null); setPendingAnchor(anchor); setPendingTarget(target ?? null) }
                 }}
               />
             </>
           ) : (
             <div className="placeholder">
               <h2>Review and edit Markdown in context</h2>
-              <p>Choose a repository and a file. Select text to leave a comment, then publish the edits and comments as a pull request.</p>
+              <p>Choose a repository and a file. Select text or click an image to leave a comment, then publish the edits and comments as a pull request.</p>
             </div>
           )}
         </main>
@@ -336,8 +505,9 @@ export default function App() {
           path={path || null}
           comments={comments}
           pendingAnchor={pendingAnchor}
+          pendingTarget={pendingTarget}
           onSave={saveComment}
-          onCancel={() => setPendingAnchor(null)}
+          onCancel={() => { setPendingAnchor(null); setPendingTarget(null) }}
           onToggleResolved={toggleResolved}
           onDelete={deleteComment}
         />
@@ -355,6 +525,34 @@ export default function App() {
           onClose={() => setPublishOpen(false)}
           onReload={reloadFile}
           onPublish={doPublish}
+        />
+      )}
+      {assetOpen && (
+        <AssetDialog
+          assets={assetViews}
+          assetSrc={(assetPath) => api.assetSrc(provider, repoId, assetPath, baseRef)}
+          onRename={(oldPath, newPath) => { void renameAsset(oldPath, newPath) }}
+          onDelete={(assetPath) => { void deleteAsset(assetPath) }}
+          onClose={() => setAssetOpen(false)}
+        />
+      )}
+      {exportOpen && (
+        <ExportDialog
+          title={path}
+          commentCount={comments.filter((comment) => comment.path === path).length}
+          onClose={() => setExportOpen(false)}
+          onPrint={(includeComments) => {
+            try {
+              printHtml(exportHtml(includeComments))
+              setExportOpen(false)
+            } catch (err) {
+              setError((err as Error).message)
+            }
+          }}
+          onDownload={(includeComments) => {
+            downloadHtml(path.replace(/\.(md|markdown)$/i, ''), exportHtml(includeComments))
+            setExportOpen(false)
+          }}
         />
       )}
       {patOpen && (

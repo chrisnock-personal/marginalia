@@ -34,3 +34,23 @@ test('comments.json requires version 1 and a comments array', () => {
   assert.throws(() => parseComments('not json'), /valid JSON/)
   assert.throws(() => parseComments('{"version":1,"comments":[{}]}'), /comment #1/)
 })
+
+test('image-target comments round-trip without a text anchor', () => {
+  const { anchor: _anchor, ...withoutAnchor } = sample.comments[0]
+  const imageComment = {
+    ...withoutAnchor,
+    target: { type: 'image' as const, path: 'docs/assets/pic.png' },
+  }
+  assert.deepEqual(parseComments(serializeComments({ version: 1, comments: [imageComment] })), {
+    version: 1,
+    comments: [imageComment],
+  })
+  assert.throws(
+    () => parseComments(JSON.stringify({ version: 1, comments: [{ ...imageComment, target: { type: 'image' } }] })),
+    /target/,
+  )
+  assert.throws(
+    () => parseComments(JSON.stringify({ version: 1, comments: [{ ...sample.comments[0], target: {} }] })),
+    /invalid fields/,
+  )
+})

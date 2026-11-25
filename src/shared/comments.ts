@@ -6,6 +6,10 @@ export function emptyComments(): CommentsFile {
   return { version: 1, comments: [] }
 }
 
+export function newCommentId(): string {
+  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
 export function serializeComments(file: CommentsFile): string {
   return `${JSON.stringify(file, null, 2)}\n`
 }
@@ -26,7 +30,19 @@ export function parseComments(raw: string): CommentsFile {
   return {
     version: 1,
     comments: file.comments.map((rawComment: Partial<Comment>, index: number): Comment => {
-      const a = rawComment.anchor
+      const a = rawComment?.anchor
+      const target = rawComment?.target
+      const validAnchor = Boolean(
+        a &&
+          typeof a.quote === 'string' &&
+          typeof a.prefix === 'string' &&
+          typeof a.suffix === 'string' &&
+          Number.isInteger(a.start) &&
+          Number.isInteger(a.end),
+      )
+      const validTarget = Boolean(
+        target && target.type === 'image' && typeof target.path === 'string' && target.path,
+      )
       if (
         !rawComment ||
         typeof rawComment.id !== 'string' ||
@@ -35,23 +51,18 @@ export function parseComments(raw: string): CommentsFile {
         typeof rawComment.author !== 'string' ||
         typeof rawComment.createdAt !== 'string' ||
         typeof rawComment.resolved !== 'boolean' ||
-        !a ||
-        typeof a.quote !== 'string' ||
-        typeof a.prefix !== 'string' ||
-        typeof a.suffix !== 'string' ||
-        !Number.isInteger(a.start) ||
-        !Number.isInteger(a.end)
+        (!validAnchor && !validTarget)
       ) {
-        throw new Error(`comments.json comment #${index + 1} is invalid`)
+        throw new Error(`comments.json comment #${index + 1} is invalid (needs an anchor or image target)`)
       }
-      if (rawComment.parentId !== undefined && typeof rawComment.parentId !== 'string') {
-        throw new Error(`comments.json comment #${index + 1} has an invalid parentId`)
+      if (
+        (a !== undefined && !validAnchor) ||
+        (target !== undefined && !validTarget) ||
+        (rawComment.parentId !== undefined && typeof rawComment.parentId !== 'string')
+      ) {
+        throw new Error(`comments.json comment #${index + 1} has invalid fields (anchor, target or parentId)`)
       }
       return rawComment as Comment
     }),
   }
-}
-
-export function newCommentId(): string {
-  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
