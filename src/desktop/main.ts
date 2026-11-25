@@ -49,7 +49,9 @@ async function start(): Promise<void> {
       ? { clientId: settings.deviceClientId }
       : null),
     publicUrl: 'http://127.0.0.1',
-    clientDir: join(app.getAppPath(), 'dist', 'client'),
+    // __dirname is dist/desktop both unpacked and inside asar, so the built
+    // client is always one level up. app.getAppPath() differs between the two.
+    clientDir: join(__dirname, '..', 'client'),
     git: git.command,
     gitEnv: git.env,
     desktop: true,
@@ -125,7 +127,7 @@ async function start(): Promise<void> {
     await shell.openExternal(url)
   })
 
-  const icon = join(app.getAppPath(), 'build', 'icon.png')
+  const icon = join(__dirname, '..', '..', 'build', 'icon.png')
   const preload = join(__dirname, 'preload.cjs')
 
   const createWindow = () => {

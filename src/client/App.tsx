@@ -660,8 +660,9 @@ export default function App() {
       )}
       {!anyConfigured && (
         <div className="banner">
-          No git source configured. Set <code>MARGINALIA_LOCAL_REPOS</code> to colon-separated repo
-          paths, or connect GitHub from the file panel.
+          {isDesktop
+            ? 'No git source configured. Use + Add in the file panel to choose a repository, or connect GitHub.'
+            : <>No git source configured. Set <code>MARGINALIA_LOCAL_REPOS</code> to repo paths, or connect GitHub from the file panel.</>}
         </div>
       )}
 
