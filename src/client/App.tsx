@@ -4,6 +4,7 @@ import { emptyComments, newCommentId } from '../shared/comments'
 import type {
   Comment,
   CommentAnchor,
+  CommentsFile,
   FileChange,
   FileEntry,
   ImageTarget,
@@ -21,6 +22,7 @@ import { buildExportHtml, downloadHtml, printHtml } from './export'
 import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
 import { previewToSrc, setImagePreview } from './repoImage'
+import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
 
 export default function App() {
@@ -241,7 +243,9 @@ export default function App() {
         if (!wasRepoAsset || current.some((asset) => asset.path === oldPath && asset.delete)) {
           return [...rest, moved]
         }
-        return [...rest, moved, { path: oldPath, content: '', delete: true }]
+        // Keep the bytes on the deletion so the dialog can show this as a move;
+        // the server ignores content when `delete` is set.
+        return [...rest, moved, { path: oldPath, content: bytesBase64, delete: true }]
       })
       setComments((current) => current.map((comment) =>
         comment.target?.path === oldPath
@@ -271,6 +275,11 @@ export default function App() {
     }
   }
 
+  const commentsFile: CommentsFile = { version: 1, comments }
+  const publishFileRows = buildPublishFiles({
+    path, markdown, original, docEdits, assets, comments: commentsFile,
+  })
+
   const openPublish = () => {
     const slug = path.split('/').pop()?.replace(/\.(md|markdown)$/i, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase() ?? 'edit'
     setBranch(`marginalia/${slug}-${Date.now().toString(36)}`)
@@ -290,12 +299,8 @@ export default function App() {
         baseSha,
         branch: values.branch,
         commitMessage: values.commitMessage,
-        files: [
-          ...(markdown === original ? [] : [{ path, content: markdown }]),
-          ...Object.entries(docEdits).map(([filePath, content]) => ({ path: filePath, content })),
-          ...assets,
-        ],
-        comments: { version: 1, comments },
+        files: publishFileRows.map((row) => row.change),
+        comments: commentsFile,
         pr: { title: values.title, body: values.body },
       })
       setPublishResult(result)
@@ -517,8 +522,7 @@ export default function App() {
         <PublishDialog
           branch={branch}
           path={path}
-          dirty={dirty}
-          comments={comments.length}
+          files={publishFileRows}
           busy={publishing}
           error={publishError}
           conflict={publishConflict}
