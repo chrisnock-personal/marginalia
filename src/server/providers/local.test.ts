@@ -318,3 +318,66 @@ test('local provider opens a PR through the GitHub API instead of gh', async () 
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('local provider falls back to the GitHub CLI when no token is set', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'marginalia-gh-fallback-test-'))
+  try {
+    const remote = join(dir, 'remote.git')
+    const repo = join(dir, 'repo')
+    mkdirSync(remote)
+    mkdirSync(repo)
+    git(['init', '--bare', '--initial-branch=main'], remote)
+    git(['init', '--initial-branch=main'], repo)
+    git(['config', 'user.name', 'Test'], repo)
+    git(['config', 'user.email', 'test@localhost'], repo)
+    writeFileSync(join(repo, 'guide.md'), '# Guide\n')
+    git(['add', '.'], repo)
+    git(['commit', '-m', 'initial'], repo)
+    git(['remote', 'add', 'origin', remote], repo)
+    git(['push', '-u', 'origin', 'main'], repo)
+
+    const ghCalls: Array<{ head: string; base: string; title: string }> = []
+    const provider = new LocalGitProvider(new Map([['test', repo]]), {
+      prRepo: 'o/r',
+      getToken: () => '',
+      createPullRequest: async () => { throw new Error('the API needs a token') },
+      ghPullRequest: async (input) => {
+        ghCalls.push({ head: input.head, base: input.base, title: input.title })
+        return 'https://github.com/o/r/pull/3'
+      },
+    })
+    const result = await provider.publish({
+      provider: 'local',
+      repo: 'test',
+      baseRef: 'main',
+      branch: 'marginalia/gh-pr',
+      commitMessage: 'Edit guide',
+      files: [{ path: 'guide.md', content: '# Guide\n\nVia gh.\n' }],
+      comments: { version: 1, comments: [] },
+      pr: { title: 'Update guide', body: 'With gh' },
+    })
+    assert.equal(result.prUrl, 'https://github.com/o/r/pull/3')
+    assert.deepEqual(ghCalls, [{ head: 'marginalia/gh-pr', base: 'main', title: 'Update guide' }])
+
+    const noGh = new LocalGitProvider(new Map([['test', repo]]), {
+      prRepo: 'o/r',
+      getToken: () => '',
+      ghPullRequest: async () => { throw new Error('gh: command not found') },
+    })
+    const fallback = await noGh.publish({
+      provider: 'local',
+      repo: 'test',
+      baseRef: 'main',
+      branch: 'marginalia/no-gh',
+      commitMessage: 'Edit guide',
+      files: [{ path: 'guide.md', content: '# Guide\n\nNo gh.\n' }],
+      comments: { version: 1, comments: [] },
+      pr: { title: 'Update guide', body: '' },
+    })
+    assert.equal(fallback.pushed, true)
+    assert.equal(fallback.prUrl, undefined)
+    assert.match(fallback.notes.join(' '), /sign in to the GitHub CLI/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

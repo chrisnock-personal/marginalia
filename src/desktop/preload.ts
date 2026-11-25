@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-const flag = process.argv.find((arg) => arg.startsWith('--marginalia-api-secret='))
-const apiSecret = flag?.slice('--marginalia-api-secret='.length) ?? ''
+// Fetched over IPC, not passed on the command line: other local users can
+// read a process's arguments. Sync so the page has it before its first fetch.
+const apiSecret = String(ipcRenderer.sendSync('marginalia:apiSecret') ?? '')
 
 contextBridge.exposeInMainWorld('marginalia', {
   apiSecret,

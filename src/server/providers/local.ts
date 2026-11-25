@@ -25,6 +25,28 @@ export interface LocalGitProviderOptions {
   prRepo?: string
   /** Injectable for tests. */
   createPullRequest?: (input: PullRequestInput) => Promise<string>
+  /** Fallback when no GitHub token is set; injectable for tests. */
+  ghPullRequest?: (input: GhPullRequestInput) => Promise<string>
+}
+
+export interface GhPullRequestInput {
+  cwd: string
+  head: string
+  base: string
+  title: string
+  body: string
+}
+
+/** Open a PR with the GitHub CLI, using its own login (the web version's original path). */
+async function ghPullRequest(input: GhPullRequestInput): Promise<string> {
+  const output = await execFileAsync(
+    'gh',
+    ['pr', 'create', '--head', input.head, '--base', input.base, '--title', input.title, '--body', input.body],
+    { cwd: input.cwd, maxBuffer: 1024 * 1024 },
+  )
+  const url = output.stdout.trim().split('\n').filter(Boolean).at(-1)
+  if (!url) throw new Error('gh pr create printed no URL')
+  return url
 }
 
 async function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
@@ -306,7 +328,20 @@ export class LocalGitProvider implements GitProvider {
           notes.push(`Branch pushed, but GitHub PR creation failed: ${(error as Error).message}`)
         }
       } else if (githubRepo && request.pr) {
-        notes.push('Branch pushed; connect GitHub to open the pull request')
+        // No token in Marginalia: the GitHub CLI may still be signed in.
+        try {
+          const gh = this.options.ghPullRequest ?? ghPullRequest
+          const prUrl = await gh({
+            cwd: worktree,
+            head: branch,
+            base: request.baseRef ?? (await this.defaultBranch(root)) ?? 'main',
+            title: request.pr.title,
+            body: request.pr.body,
+          })
+          return { branch, commit, pushed: true, prUrl, notes }
+        } catch {
+          notes.push('Branch pushed; connect GitHub (or sign in to the GitHub CLI) to open the pull request')
+        }
       } else {
         notes.push('Branch pushed to origin; no pull request was created')
       }

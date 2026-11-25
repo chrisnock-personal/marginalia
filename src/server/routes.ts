@@ -84,13 +84,19 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
     }
   })
 
-  const deviceCodes = new Set<string>()
+  // Device code -> expiry time; codes nobody finishes are dropped once expired.
+  const deviceCodes = new Map<string, number>()
+  const pruneDeviceCodes = () => {
+    const now = Date.now()
+    for (const [code, expires] of deviceCodes) if (expires <= now) deviceCodes.delete(code)
+  }
 
   /** Desktop sign-in: show a code, then poll until GitHub authorizes it. */
   router.post('/auth/github/device', async (_req, res) => {
     if (!config.deviceFlow) throw new HttpError(400, 'GitHub device sign-in is not configured')
     const code = await requestDeviceCode(config.deviceFlow)
-    deviceCodes.add(code.device_code)
+    pruneDeviceCodes()
+    deviceCodes.set(code.device_code, Date.now() + code.expires_in * 1000)
     res.json({
       deviceCode: code.device_code,
       userCode: code.user_code,
@@ -102,6 +108,7 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
 
   router.post('/auth/github/device/poll', async (req, res) => {
     const deviceCode = typeof req.body?.deviceCode === 'string' ? req.body.deviceCode : ''
+    pruneDeviceCodes()
     if (!config.deviceFlow || !deviceCode || !deviceCodes.has(deviceCode)) {
       throw new HttpError(400, 'Unknown device sign-in session')
     }

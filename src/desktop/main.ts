@@ -23,6 +23,29 @@ const secret = randomBytes(32).toString('hex')
 let launchUrl = ''
 let openWindow: (() => void) | null = null
 
+/**
+ * True only when tokens would really be encrypted. On Linux without a secret
+ * service Electron falls back to `basic_text`, a hard-coded key: that is no
+ * better than a plain file, so treat it as unavailable.
+ */
+function secureStorageAvailable(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  return process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'
+}
+
+/** Hand only web links to the system; other schemes can launch local programs. */
+function openExternalSafely(url: string): void {
+  let protocol = ''
+  try { protocol = new URL(url).protocol } catch { /* not a URL */ }
+  if (protocol === 'http:' || protocol === 'https:') void shell.openExternal(url)
+  else console.warn(`Refusing to open ${url}`)
+}
+
+/** IPC must come from the app's own page, not from anything else loaded later. */
+function fromApp(frameUrl: string | undefined): boolean {
+  try { return Boolean(launchUrl) && new URL(frameUrl ?? '').origin === new URL(launchUrl).origin } catch { return false }
+}
+
 async function start(): Promise<void> {
   const base = loadConfig()
   const file = settingsPath(app)
@@ -32,7 +55,7 @@ async function start(): Promise<void> {
 
   const roots = new Map(settings.repos.map((repo) => [repo.id, repo.path]))
   let storedToken = ''
-  if (settings.token && safeStorage.isEncryptionAvailable()) {
+  if (settings.token && secureStorageAvailable()) {
     try {
       storedToken = safeStorage.decryptString(Buffer.from(settings.token.encrypted, 'base64'))
     } catch (error) {
@@ -40,6 +63,11 @@ async function start(): Promise<void> {
       delete settings.token
       persist()
     }
+  } else if (settings.token) {
+    // Saved without real encryption (or the keyring has gone): don't keep it.
+    console.warn('No system credential store; removing the saved GitHub token')
+    delete settings.token
+    persist()
   }
   const server = createServer({
     ...base,
@@ -57,7 +85,7 @@ async function start(): Promise<void> {
     desktop: true,
     apiSecret: secret,
     onToken: (token, login) => {
-      if (!safeStorage.isEncryptionAvailable()) {
+      if (!secureStorageAvailable()) {
         if (token) console.warn('System credential store unavailable; token kept in memory only')
         return
       }
@@ -87,6 +115,12 @@ async function start(): Promise<void> {
       return false
     }
   }
+
+  // The renderer fetches the API secret here rather than from its command
+  // line, which other local users can read.
+  ipcMain.on('marginalia:apiSecret', (event) => {
+    event.returnValue = fromApp(event.senderFrame?.url) ? secret : ''
+  })
 
   ipcMain.handle('marginalia:chooseFolder', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
@@ -141,8 +175,7 @@ async function start(): Promise<void> {
         preload,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
-        additionalArguments: [`--marginalia-api-secret=${secret}`],
+        sandbox: true,
       },
     })
     window.once('ready-to-show', () => window.show())
@@ -151,7 +184,7 @@ async function start(): Promise<void> {
       persist()
     })
     window.webContents.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url)
+      openExternalSafely(url)
       return { action: 'deny' }
     })
     window.webContents.on('will-navigate', (event, url) => {
@@ -159,7 +192,7 @@ async function start(): Promise<void> {
       try { sameOrigin = new URL(url).origin === new URL(launchUrl).origin } catch { /* invalid URL */ }
       if (!sameOrigin) {
         event.preventDefault()
-        void shell.openExternal(url)
+        openExternalSafely(url)
       }
     })
     void window.loadURL(launchUrl)
