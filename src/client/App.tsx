@@ -150,7 +150,9 @@ export default function App() {
   const createNewFile = (name: string, folder: string) => {
     if (!repoId) throw new Error('Choose a repository first')
     const created = newMarkdownFile(name, folder)
-    if (files.some((file) => file.path === created.path) || created.path in newFiles) {
+    // Compare case-insensitively: macOS and Windows checkouts can't hold both.
+    const taken = (other: string) => other.toLowerCase() === created.path.toLowerCase()
+    if (files.some((file) => taken(file.path)) || Object.keys(newFiles).some(taken)) {
       throw new Error(`${created.path} already exists in this repository`)
     }
     setNewFiles((current) => ({ ...current, [created.path]: created.content }))
@@ -480,12 +482,12 @@ export default function App() {
       })
       setPublishResult(result)
       setOriginal(markdown)
-      setFiles((current) => [
-        ...current,
-        ...Object.keys(newFiles)
-          .filter((newPath) => !current.some((file) => file.path === newPath))
-          .map((newPath) => ({ path: newPath, type: 'blob' as const })),
-      ])
+      // New files exist only on the pushed branch until the PR is merged, so
+      // they can't be read from the base branch: leave them out of the list.
+      const published = Object.keys(newFiles)
+      if (published.length) {
+        setNotice(`${published.join(', ')} ${published.length === 1 ? 'is' : 'are'} on the new branch and will appear in the file list once the pull request is merged`)
+      }
       setAssets([])
       setAssetDocs({})
       setMovedFrom({})

@@ -14,7 +14,9 @@ export function newMarkdownFile(name: string, folder: string): NewMarkdownFile {
     throw new Error('Use the folder field for subfolders')
   }
 
-  const extension = trimmedName.match(/\.([a-z0-9]+)$/i)?.[1]
+  // Only a trailing dot-word counts as an extension, so "release-1.2" becomes
+  // release-1.2.md rather than being rejected.
+  const extension = trimmedName.match(/\.([a-z][a-z0-9]*)$/i)?.[1]
   let fileName = trimmedName
   if (extension) {
     if (!/^(md|markdown)$/i.test(extension)) {

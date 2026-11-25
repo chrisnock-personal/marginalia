@@ -18,6 +18,10 @@ test('markdown extensions, folders and punctuation are accepted', () => {
   })
 })
 
+test('a version number is not mistaken for an extension', () => {
+  assert.equal(newMarkdownFile('release-1.2', '').path, 'release-1.2.md')
+})
+
 test('other extensions and names with separators are rejected', () => {
   assert.throws(() => newMarkdownFile('notes.txt', ''), /Only \.md and \.markdown/)
   assert.throws(() => newMarkdownFile('docs/notes.md', ''), /folder field/)
