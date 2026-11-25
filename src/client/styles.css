@@ -136,9 +136,10 @@ button.file.active { background: var(--hover); color: var(--ink); font-weight: 6
 }
 .empty p { margin: 0; font-family: var(--writing); font-size: 17px; line-height: 1.6; color: var(--ink-soft); }
 
-.editor-shell { --gutter: clamp(30px, 4vw, 72px); }  /* the writing fills its pane; hiding a panel gives it the room */
+.writing { container-type: inline-size; }
+.editor-shell { --gutter: clamp(30px, 4cqi, 72px); }  /* the writing fills its pane; hiding a panel gives it the room */
 .toolbar {
-  position: sticky; top: 0; z-index: 2; background: rgb(255 255 255 / 96%);
+  position: sticky; top: 0; z-index: 2; background: var(--paper);
   display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 14px var(--gutter) 6px;
 }
 .tool { min-width: 30px; padding: 6px 8px; font-size: 13px; }
