@@ -8,12 +8,15 @@ import type { Comment, CommentAnchor, ImageTarget } from '../shared/types'
 import { anchorFromSelection } from './anchors'
 import { repoPathFor } from './assetPaths'
 import { CommentHighlight, setCommentHighlights } from './commentHighlight'
+import { normalizeMarkdown } from './markdownFormat'
 import RepoImage, { clearImagePreviews, setImagePreview } from './repoImage'
 
 interface Props {
   documentKey: string
   docPath: string
   markdown: string
+  /** Original Markdown from the repo, used to preserve table formatting. */
+  sourceMarkdown: string
   comments: Comment[]
   /** Resolve repo-relative image paths for display. */
   resolveSrc: (src: string) => string
@@ -34,6 +37,7 @@ export default function Editor({
   documentKey,
   docPath,
   markdown,
+  sourceMarkdown,
   comments,
   resolveSrc,
   onAsset,
@@ -45,6 +49,10 @@ export default function Editor({
   // it need not be recreated on each keystroke.
   const callbacks = useRef({ resolveSrc, onAsset, onChange, onAddComment, onEditorReady })
   callbacks.current = { resolveSrc, onAsset, onChange, onAddComment, onEditorReady }
+  // The editor is created once per document; read the base text from a ref so
+  // publishing (which changes `original`) does not recreate it.
+  const sourceRef = useRef(sourceMarkdown)
+  sourceRef.current = sourceMarkdown
   const fileInput = useRef<HTMLInputElement>(null)
 
   const editor = useEditor(
@@ -58,7 +66,8 @@ export default function Editor({
       ],
       content: markdown,
       contentType: 'markdown',
-      onUpdate: ({ editor: current }) => callbacks.current.onChange(current.getMarkdown()),
+      onUpdate: ({ editor: current }) =>
+        callbacks.current.onChange(normalizeMarkdown(current.getMarkdown(), sourceRef.current)),
     },
     // Recreate when a different document is opened so Markdown parsing and the
     // asset resolver always match the current repo.
@@ -96,10 +105,11 @@ export default function Editor({
   // Load a new document (or a reload after a conflict). Typing is a no-op here:
   // the prop already equals what the editor produced in onUpdate.
   useEffect(() => {
-    if (editor && !editor.isDestroyed && editor.getMarkdown() !== markdown) {
+    if (editor && !editor.isDestroyed &&
+        normalizeMarkdown(editor.getMarkdown(), sourceMarkdown) !== markdown) {
       editor.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: false })
     }
-  }, [documentKey, editor, markdown])
+  }, [documentKey, editor, markdown, sourceMarkdown])
 
   useEffect(() => {
     setCommentHighlights(editor, comments, docPath)
