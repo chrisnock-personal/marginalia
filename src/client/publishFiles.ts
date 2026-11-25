@@ -13,9 +13,7 @@ export interface PublishFileRow {
 }
 
 interface PublishFilesInput {
-  path: string
-  markdown: string
-  original: string
+  /** Every unpublished Markdown file, including the one currently open. */
   docEdits: Record<string, string>
   assets: FileChange[]
   /** New path -> original path for staged moves (client-side only). */
@@ -42,18 +40,12 @@ function findMovePairs(assets: FileChange[], movedFrom: Record<string, string>) 
 
 /** Build the single file list used by both the publish request and the dialog. */
 export function buildPublishFiles({
-  path,
-  markdown,
-  original,
   docEdits,
   assets,
   movedFrom = {},
   comments,
 }: PublishFilesInput): PublishFileRow[] {
   const files: PublishFileRow[] = []
-  if (path && markdown !== original) {
-    files.push({ change: { path, content: markdown }, status: 'edited' })
-  }
   for (const [filePath, content] of Object.entries(docEdits)) {
     files.push({ change: { path: filePath, content }, status: 'edited' })
   }

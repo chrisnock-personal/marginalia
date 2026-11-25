@@ -75,6 +75,8 @@ The env/file token is the fallback after a UI token; **Clear token** removes onl
 1. Choose a provider, repo and `.md` file.
 2. Edit as you would in a word processor: headings, lists, tables, links and images round-trip as
    Markdown. Use **table** to insert a grid and the row/column tools that appear inside it.
+   Unpublished edits are kept per file, so you can open another page and come back without losing
+   work; the publish dialog lists every changed file in one pull request.
 3. Insert an image by URL, or paste/drop/select an image file — it is staged in an `assets/` folder
    beside the document and included in the PR.
 4. Use **Assets** to rename/move/delete images. References in all Markdown files are rewritten (or
@@ -137,7 +139,8 @@ Design notes: [docs/architecture.md](docs/architecture.md). API reference: [docs
 
 ## Current limits
 
-Prototype scope: single-user, single-document editing at a time; one GitHub identity per server
+Prototype scope: single-user, one document open at a time (unpublished edits are kept per file);
+one GitHub identity per server
 process (no per-user sessions). Conflict detection is branch-level, not three-way file merges.
 Comments highlight in the editor but are not posted as GitHub review comments. Only Markdown files
 are browsed; the asset manager handles images only, and renamed/deleted paths are rewritten in

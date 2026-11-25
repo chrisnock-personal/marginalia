@@ -17,12 +17,13 @@ import { api } from './api'
 import AssetDialog, { type AssetView } from './AssetDialog'
 import { relativeSrcFor, repoPathFor, rewriteReferences } from './assetPaths'
 import CommentsPanel from './CommentsPanel'
+import { updateDocEdit } from './docEdits'
 import Editor from './Editor'
 import Logo from './Logo'
 import { buildExportHtml, downloadHtml, inlineImageSources, printHtml, resolveExportImageSource } from './export'
 import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
-import { previewToSrc, setImagePreview } from './repoImage'
+import { clearImagePreviews, previewToSrc, setImagePreview } from './repoImage'
 import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
 
@@ -70,6 +71,7 @@ export default function App() {
   const [repoAssets, setRepoAssets] = useState<FileEntry[]>([])
   const [docEdits, setDocEdits] = useState<Record<string, string>>({})
   const [comments, setComments] = useState(emptyComments().comments)
+  const [commentsDirty, setCommentsDirty] = useState(false)
   const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null)
   const [pendingTarget, setPendingTarget] = useState<ImageTarget | null>(null)
   const [baseSha, setBaseSha] = useState('')
@@ -104,7 +106,30 @@ export default function App() {
   const [branch, setBranch] = useState('marginalia/edit')
   const editorRef = useRef<TiptapEditor | null>(null)
   const baseMarkdown = useRef<Record<string, string>>({})
+  // Read by the load effect, which must not re-run on every keystroke.
+  const docEditsRef = useRef(docEdits)
+  const commentsLoaded = useRef('')
   const baseRef = repos.find((repo) => repo.id === repoId)?.defaultBranch
+
+  useEffect(() => { docEditsRef.current = docEdits }, [docEdits])
+
+  /** Store an edit under its path so switching files cannot lose it. */
+  const writeDocEdit = (filePath: string, content: string) => {
+    const base = filePath === path ? original : baseMarkdown.current[filePath] ?? ''
+    setDocEdits((current) => updateDocEdit(current, filePath, content, base))
+    if (filePath === path) setMarkdown(content)
+  }
+
+  /** Open another file without discarding edits, images, moves or comments. */
+  const openFile = (filePath: string) => {
+    if (filePath === path) return
+    setPath(filePath)
+    setPendingAnchor(null)
+    setPendingTarget(null)
+    setPublishResult(null)
+    setNotice(null)
+    if (window.matchMedia('(max-width: 760px)').matches) setNarrowHidden(true)
+  }
 
   const refreshConfig = async () => {
     const result = await api.config()
@@ -140,6 +165,10 @@ export default function App() {
     setRepoAssets([])
     setDocEdits({})
     baseMarkdown.current = {}
+    setComments(emptyComments().comments)
+    setCommentsDirty(false)
+    commentsLoaded.current = ''
+    clearImagePreviews()
     setPublishResult(null)
     const info = config.find((p) => p.id === provider)
     if (!info?.configured) return
@@ -155,8 +184,16 @@ export default function App() {
     let cancelled = false
     setFiles([])
     setRepoAssets([])
+    setAssets([])
+    setMovedFrom({})
     setDocEdits({})
+    setMarkdown('')
+    setOriginal('')
+    setComments(emptyComments().comments)
+    setCommentsDirty(false)
+    commentsLoaded.current = ''
     baseMarkdown.current = {}
+    clearImagePreviews()
     api.files(provider, repoId, baseRef)
       .then((result) => { if (!cancelled) setFiles(result) })
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
@@ -173,19 +210,27 @@ export default function App() {
     setError(null)
     setPendingAnchor(null)
     setPendingTarget(null)
-    // Read the page and comments at the exact commit the publish will build on
-    // and check against, so stale text can never be written over newer work.
+    // Comments belong to the repository, so read them only once per reload;
+    // switching pages must not throw away notes written on the previous one.
+    const commentsKey = `${provider}/${repoId}/${reloadKey}`
+    const needComments = commentsLoaded.current !== commentsKey
+    // Read the page at the exact commit the publish will build on and check
+    // against, so stale text can never be written over newer work.
     api.head(provider, repoId, baseRef)
       .then((head) => Promise.all([
         api.file(provider, repoId, path, head.sha),
-        api.comments(provider, repoId, head.sha),
+        needComments ? api.comments(provider, repoId, head.sha) : Promise.resolve(null),
         head,
       ]))
       .then(([file, loaded, head]) => {
         if (cancelled) return
         setOriginal(file.content)
-        setMarkdown(file.content)
-        setComments(loaded.comments)
+        setMarkdown(docEditsRef.current[path] ?? file.content)
+        if (loaded) {
+          setComments(loaded.comments)
+          setCommentsDirty(false)
+          commentsLoaded.current = commentsKey
+        }
         setBaseSha(head.sha)
         setPublishResult(null)
         setNotice(null)
@@ -238,28 +283,12 @@ export default function App() {
   const rewriteAllReferences = async (oldPath: string, newPath: string | null) => {
     const base = await loadBaseMarkdown()
     const updates: Record<string, string> = {}
-    const removed: string[] = []
-    let currentFileUpdate: string | undefined
     for (const filePath of Object.keys(base)) {
-      const current = filePath === path ? markdown : docEdits[filePath] ?? base[filePath]
+      const current = docEdits[filePath] ?? base[filePath]
       const next = rewriteReferences(current, filePath, oldPath, newPath)
-      if (next === current) continue
-      if (filePath === path) {
-        currentFileUpdate = next
-      } else if (next === base[filePath]) {
-        removed.push(filePath)
-      } else {
-        updates[filePath] = next
-      }
+      if (next !== current) updates[filePath] = next
     }
-    if (currentFileUpdate !== undefined) setMarkdown(currentFileUpdate)
-    if (Object.keys(updates).length || removed.length) {
-      setDocEdits((previous) => {
-        const next = { ...previous, ...updates }
-        for (const key of removed) delete next[key]
-        return next
-      })
-    }
+    for (const [filePath, content] of Object.entries(updates)) writeDocEdit(filePath, content)
   }
 
   const checkAssetPath = (value: string): string => {
@@ -307,6 +336,7 @@ export default function App() {
           ? { ...comment, target: { ...comment.target, path: newPath } }
           : comment,
       ))
+      setCommentsDirty(true)
       setNotice(`Moved ${oldPath} → ${newPath}; Markdown references updated`)
     } catch (err) {
       setError((err as Error).message)
@@ -328,6 +358,7 @@ export default function App() {
         return rest
       })
       setComments((current) => current.filter((comment) => comment.target?.path !== assetPath))
+      setCommentsDirty(true)
       setNotice(`Deleted ${assetPath}; image embeds removed from Markdown`)
     } catch (err) {
       setError((err as Error).message)
@@ -336,7 +367,7 @@ export default function App() {
 
   const commentsFile: CommentsFile = { version: 1, comments }
   const publishFileRows = buildPublishFiles({
-    path, markdown, original, docEdits, assets, movedFrom, comments: commentsFile,
+    docEdits, assets, movedFrom, comments: commentsFile,
   })
 
   const openPublish = () => {
@@ -368,7 +399,9 @@ export default function App() {
       setAssets([])
       setMovedFrom({})
       setDocEdits({})
+      setCommentsDirty(false)
       baseMarkdown.current = {}
+      clearImagePreviews()
       setPublishOpen(false)
     } catch (err) {
       const message = (err as Error).message
@@ -400,6 +433,7 @@ export default function App() {
     ])
     setPendingAnchor(null)
     setPendingTarget(null)
+    setCommentsDirty(true)
   }
 
   const toggleResolved = (id: string) => {
@@ -409,10 +443,12 @@ export default function App() {
     setComments(comments.map((comment) =>
       comment.id === id || comment.parentId === id ? { ...comment, resolved } : comment,
     ))
+    setCommentsDirty(true)
   }
 
   const deleteComment = (id: string) => {
     setComments(comments.filter((comment) => comment.id !== id && comment.parentId !== id))
+    setCommentsDirty(true)
   }
 
   const reloadFile = () => {
@@ -420,7 +456,10 @@ export default function App() {
     setAssets([])
     setMovedFrom({})
     setDocEdits({})
+    setCommentsDirty(false)
+    commentsLoaded.current = ''
     baseMarkdown.current = {}
+    clearImagePreviews()
     setReloadKey((key) => key + 1)
   }
 
@@ -454,7 +493,18 @@ export default function App() {
 
   const github = config.find((p) => p.id === 'github')
   const anyConfigured = config.some((p) => p.configured)
-  const dirty = markdown !== original || assets.length > 0 || Object.keys(docEdits).length > 0
+  const dirty = Object.keys(docEdits).length > 0 || assets.length > 0 || commentsDirty
+
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
   const assetPaths = [...new Set([...repoAssets.map((asset) => asset.path), ...assets.map((asset) => asset.path)])]
   const assetViews: AssetView[] = assetPaths.map((assetPath) => ({
     path: assetPath,
@@ -591,10 +641,7 @@ export default function App() {
                           type="button"
                           className={file.path === path ? 'file active' : 'file'}
                           aria-current={file.path === path ? 'page' : undefined}
-                          onClick={() => {
-                            setPath(file.path); setAssets([]); setMovedFrom({}); setPublishResult(null)
-                            if (window.matchMedia('(max-width: 760px)').matches) setNarrowHidden(true)
-                          }}
+                          onClick={() => openFile(file.path)}
                         >
                           {file.path.split('/').pop()}
                         </button>
@@ -619,10 +666,10 @@ export default function App() {
                 docPath={path}
                 markdown={markdown}
                 sourceMarkdown={original}
-                comments={comments}
+                comments={docComments}
                 resolveSrc={resolveSrc}
                 onAsset={stageAsset}
-                onChange={setMarkdown}
+                onChange={(content) => writeDocEdit(path, content)}
                 onEditorReady={(instance) => { editorRef.current = instance }}
                 onAddComment={(anchor, target) => {
                   if (!anchor && !target) setError('Select some text or click an image before adding a comment')
