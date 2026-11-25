@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { authorizeUrl, exchangeCode, OAuthState } from './oauth'
+import {
+  authorizeUrl,
+  exchangeCode,
+  OAuthState,
+  pollDeviceCode,
+  requestDeviceCode,
+} from './oauth'
 
 test('OAuth state is single-use and expires', () => {
   const states = new OAuthState()
@@ -58,4 +64,55 @@ test('code exchange posts the client secret and returns the token', async () => 
   assert.equal(seen?.accept, 'application/json')
   assert.equal(JSON.parse(seen!.body).code, 'code-xyz')
   assert.equal(JSON.parse(seen!.body).client_secret, 'secret')
+})
+
+function fakeDeviceFetch(responses: unknown[]): typeof fetch {
+  let index = 0
+  return async () => new Response(JSON.stringify(responses[index++]), { status: 200 })
+}
+
+test('device flow requests a user code', async () => {
+  const calls: Array<{ url: string; body: string }> = []
+  const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    calls.push({ url: String(input), body: String(init?.body ?? '') })
+    return new Response(JSON.stringify({
+      device_code: 'device-1',
+      user_code: 'ABCD-1234',
+      verification_uri: 'https://github.com/login/device',
+      expires_in: 900,
+      interval: 5,
+    }), { status: 200 })
+  }
+  const code = await requestDeviceCode({ clientId: 'desktop-client' }, fetchImpl as typeof fetch)
+  assert.equal(code.user_code, 'ABCD-1234')
+  assert.match(calls[0].url, /login\/device\/code$/)
+  assert.equal(JSON.parse(calls[0].body).client_id, 'desktop-client')
+})
+
+test('device polling distinguishes pending, slow down and success', async () => {
+  const fetchImpl = fakeDeviceFetch([
+    { error: 'authorization_pending' },
+    { error: 'slow_down' },
+    { access_token: 'device-token' },
+  ])
+  assert.deepEqual(await pollDeviceCode({ clientId: 'c' }, 'device-1', fetchImpl), {
+    pending: true,
+    slowDown: false,
+  })
+  assert.deepEqual(await pollDeviceCode({ clientId: 'c' }, 'device-1', fetchImpl), {
+    pending: true,
+    slowDown: true,
+  })
+  assert.deepEqual(await pollDeviceCode({ clientId: 'c' }, 'device-1', fetchImpl), {
+    pending: false,
+    token: 'device-token',
+  })
+})
+
+test('device polling reports denial as an error', async () => {
+  const fetchImpl = fakeDeviceFetch([{ error: 'access_denied', error_description: 'No thanks' }])
+  await assert.rejects(
+    () => pollDeviceCode({ clientId: 'c' }, 'device-1', fetchImpl),
+    /No thanks/,
+  )
 })

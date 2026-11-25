@@ -3,19 +3,25 @@ import { useState, type FormEvent } from 'react'
 interface Props {
   login: string | null
   oauthConfigured: boolean
+  deviceFlowConfigured?: boolean
+  desktop?: boolean
   onClose: () => void
   onSave: (token: string) => Promise<void>
   onClear: () => Promise<void>
   onOAuth: () => Promise<void>
+  onDeviceFlow: () => void
 }
 
 export default function PatDialog({
   login,
   oauthConfigured,
+  deviceFlowConfigured = false,
+  desktop = false,
   onClose,
   onSave,
   onClear,
   onOAuth,
+  onDeviceFlow,
 }: Props) {
   const [token, setToken] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -64,10 +70,18 @@ export default function PatDialog({
       <div className="dialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <h2>Connect GitHub</h2>
         <p className="muted">
-          Sign in with an OAuth App, or use a personal access token. Tokens are validated with
-          <code> GET /user</code> and held only in the server process — never in browser storage or on disk.
+          Sign in with GitHub, or use a personal access token. Tokens are validated with
+          <code> GET /user</code> and held in the server process; the desktop app keeps an encrypted
+          copy in the system credential store, never in a plain file.
         </p>
-        {oauthConfigured && (
+        {deviceFlowConfigured && (
+          <p>
+            <button type="button" className="primary" onClick={onDeviceFlow} disabled={busy}>
+              Sign in with a device code
+            </button>
+          </p>
+        )}
+        {!desktop && oauthConfigured && (
           <p>
             <button type="button" className="primary" onClick={oauth} disabled={busy}>
               Sign in with GitHub (OAuth)

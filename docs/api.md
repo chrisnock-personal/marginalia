@@ -3,7 +3,10 @@
 Base URL: `/api` (same origin; Vite proxies to the Express server in development).
 
 All responses are JSON. Errors have the shape `{ "error": "message" }` with an appropriate HTTP
-status.
+status. When `MARGINALIA_API_SECRET` is set, every request must supply it in the
+`X-Marginalia-Api-Secret` header (or as `?secret=…` for URLs such as images that cannot set headers).
+The Electron app generates a random secret per launch and passes it to the page through its preload
+script.
 
 ## `GET /config`
 
@@ -11,12 +14,17 @@ Returns the available sources and whether each is configured.
 
 ```json
 {
+  "desktop": false,
+  "localRepos": [],
   "providers": [
     { "id": "local", "label": "Local git repos", "configured": true, "detail": "2 repo(s) configured", "dryRun": false },
-    { "id": "github", "label": "GitHub (PAT)", "configured": true, "detail": "Authenticated as chrisnock", "oauthConfigured": true }
+    { "id": "github", "label": "GitHub (PAT)", "configured": true, "detail": "Authenticated as chrisnock", "oauthConfigured": true, "deviceFlowConfigured": false }
   ]
 }
 ```
+
+`desktop` and `localRepos` are present for the Electron app; `deviceFlowConfigured` is true when a
+public GitHub client id is available for device sign-in.
 
 ## `POST /token`
 
@@ -46,6 +54,26 @@ single-use `state` value (valid for 10 minutes).
 
 OAuth callback. Exchanges the code, validates the token, stores it server-side and redirects to
 `MARGINALIA_PUBLIC_URL/?auth=success` (or `?auth=error&message=…`).
+
+## `POST /auth/github/device`
+
+Requires `MARGINALIA_GITHUB_CLIENT_ID` (or `GITHUB_CLIENT_ID`). Asks GitHub for a device code.
+
+```json
+{
+  "deviceCode": "…",
+  "userCode": "ABCD-1234",
+  "verificationUri": "https://github.com/login/device",
+  "expiresIn": 900,
+  "interval": 5
+}
+```
+
+## `POST /auth/github/device/poll`
+
+Body: `{ "deviceCode": "…" }`. Returns `{ "pending": true, "slowDown": boolean }` while the user has
+not finished, or `{ "pending": false, "configured": true, "login": "chrisnock" }` once authorized.
+The desktop app persists the token through Electron `safeStorage` when it changes.
 
 ## `GET /repos?provider=local|github`
 

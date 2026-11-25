@@ -5,16 +5,48 @@
   "description": "WYSIWYG Markdown editor that reads git repos, adds inline comments and publishes edits as PRs",
   "license": "GPL-3.0-only",
   "type": "module",
+  "main": "dist/desktop/main.cjs",
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "tsx watch src/server/index.ts",
+    "dev:server": "tsx watch src/server/start.ts",
     "dev:client": "vite",
+    "dev:desktop": "npm run build:desktop && electron dist/desktop/main.cjs",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
-    "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outdir=dist/server",
-    "start": "node dist/server/index.js",
+    "build:server": "esbuild src/server/index.ts src/server/start.ts --bundle --platform=node --format=esm --packages=external --outdir=dist/server",
+    "build:desktop": "npm run build:client && esbuild src/desktop/main.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/desktop/main.cjs && esbuild src/desktop/preload.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/desktop/preload.cjs",
+    "dist:desktop": "npm run build:desktop && electron-builder",
+    "start": "node dist/server/start.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test 'src/**/*.test.ts'"
+  },
+  "build": {
+    "appId": "com.marginalia.app",
+    "productName": "Marginalia",
+    "files": [
+      "dist/client/**/*",
+      "dist/desktop/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "icon": "build/icon.png",
+    "asarUnpack": [
+      "node_modules/dugite/git/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office"
+    }
   },
   "dependencies": {
     "@fontsource-variable/source-serif-4": "^5.3.1",
@@ -35,9 +67,14 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.3.0",
     "concurrently": "^10.0.7",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vite": "^8.3.8"
+  },
+  "optionalDependencies": {
+    "dugite": "^3.3.3"
   }
 }

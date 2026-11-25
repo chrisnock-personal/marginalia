@@ -76,7 +76,7 @@ test('local provider reads files and publishes a branch with comments.json', asy
 
     assert.equal(result.pushed, true)
     assert.equal(result.prUrl, undefined)
-    assert.match(result.notes.join(' '), /not GitHub/)
+    assert.match(result.notes.join(' '), /no pull request was created/)
     assert.match(git(['show', 'marginalia/test-edit:docs/guide.md'], remote), /Changed text/)
     const publishedPng = execFileSync('git', ['show', 'marginalia/test-edit:docs/assets/pic.png'], {
       cwd: remote,
@@ -265,6 +265,55 @@ test('local provider falls back to the local ref when origin cannot be fetched',
     assert.ok(result.commit)
     assert.equal(git(['rev-parse', `${result.commit}^`], repo), localSha)
     assert.equal(git(['rev-parse', 'HEAD'], repo), localSha)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('local provider opens a PR through the GitHub API instead of gh', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'marginalia-local-pr-test-'))
+  try {
+    const remote = join(dir, 'remote.git')
+    const repo = join(dir, 'repo')
+    mkdirSync(remote)
+    mkdirSync(repo)
+    git(['init', '--bare', '--initial-branch=main'], remote)
+    git(['init', '--initial-branch=main'], repo)
+    git(['config', 'user.name', 'Test'], repo)
+    git(['config', 'user.email', 'test@localhost'], repo)
+    writeFileSync(join(repo, 'guide.md'), '# Guide\n')
+    git(['add', '.'], repo)
+    git(['commit', '-m', 'initial'], repo)
+    git(['remote', 'add', 'origin', remote], repo)
+    git(['push', '-u', 'origin', 'main'], repo)
+
+    const calls: Array<{ repo: string; head: string; base: string; token: string }> = []
+    const provider = new LocalGitProvider(new Map([['test', repo]]), {
+      prRepo: 'o/r',
+      getToken: () => 'device-token',
+      createPullRequest: async (input) => {
+        calls.push({ repo: input.repo, head: input.head, base: input.base, token: input.token })
+        return 'https://github.com/o/r/pull/2'
+      },
+    })
+    const result = await provider.publish({
+      provider: 'local',
+      repo: 'test',
+      baseRef: 'main',
+      branch: 'marginalia/api-pr',
+      commitMessage: 'Edit guide',
+      files: [{ path: 'guide.md', content: '# Guide\n\nNew text.\n' }],
+      comments: { version: 1, comments: [] },
+      pr: { title: 'Update guide', body: 'Without gh' },
+    })
+    assert.equal(result.pushed, true)
+    assert.equal(result.prUrl, 'https://github.com/o/r/pull/2')
+    assert.deepEqual(calls, [{
+      repo: 'o/r',
+      head: 'marginalia/api-pr',
+      base: 'main',
+      token: 'device-token',
+    }])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

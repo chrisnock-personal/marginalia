@@ -1,8 +1,14 @@
 import express, { type Router } from 'express'
 import type { PublishRequest } from '../shared/types'
-import { HttpError, providerFor, type ServerConfig, type TokenState } from './config'
+import { clearGithubToken, HttpError, providerFor, setGithubToken, type ServerConfig, type TokenState } from './config'
 import { GitHubProvider } from './providers/github'
-import { authorizeUrl, exchangeCode, OAuthState } from './oauth'
+import {
+  authorizeUrl,
+  exchangeCode,
+  OAuthState,
+  pollDeviceCode,
+  requestDeviceCode,
+} from './oauth'
 
 export function createApiRouter(config: ServerConfig, tokens: TokenState): Router {
   const router = express.Router()
@@ -10,6 +16,10 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
 
   router.get('/config', (_req, res) => {
     res.json({
+      desktop: config.desktop,
+      localRepos: config.desktop
+        ? [...config.localRoots].map(([id, repoPath]) => ({ id, path: repoPath }))
+        : [],
       providers: [
         {
           id: 'local',
@@ -20,10 +30,11 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
         },
         {
           id: 'github',
-          label: 'GitHub (PAT)',
+          label: config.desktop ? 'GitHub' : 'GitHub (PAT)',
           configured: tokens.configured,
           detail: tokens.user ? `Authenticated as ${tokens.user}` : undefined,
           oauthConfigured: Boolean(config.oauth),
+          deviceFlowConfigured: Boolean(config.deviceFlow),
         },
       ],
     })
@@ -40,12 +51,12 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
       if (/\b(401|403)\b/.test((err as Error).message)) throw new HttpError(401, 'GitHub rejected that PAT')
       throw err
     }
-    tokens.set(token, user.login)
+    setGithubToken(config, tokens, token, user.login)
     res.json({ configured: true, login: user.login })
   })
 
   router.delete('/token', (_req, res) => {
-    tokens.clear()
+    clearGithubToken(config, tokens)
     res.json({ configured: tokens.configured })
   })
 
@@ -66,11 +77,44 @@ export function createApiRouter(config: ServerConfig, tokens: TokenState): Route
     try {
       const token = await exchangeCode(config.oauth, code)
       const user = await new GitHubProvider(() => token).whoAmI()
-      tokens.set(token, user.login)
+      setGithubToken(config, tokens, token, user.login)
       res.redirect(`${config.publicUrl}/?auth=success`)
     } catch (error) {
       fail(`GitHub sign-in failed: ${(error as Error).message}`)
     }
+  })
+
+  const deviceCodes = new Set<string>()
+
+  /** Desktop sign-in: show a code, then poll until GitHub authorizes it. */
+  router.post('/auth/github/device', async (_req, res) => {
+    if (!config.deviceFlow) throw new HttpError(400, 'GitHub device sign-in is not configured')
+    const code = await requestDeviceCode(config.deviceFlow)
+    deviceCodes.add(code.device_code)
+    res.json({
+      deviceCode: code.device_code,
+      userCode: code.user_code,
+      verificationUri: code.verification_uri,
+      expiresIn: code.expires_in,
+      interval: code.interval,
+    })
+  })
+
+  router.post('/auth/github/device/poll', async (req, res) => {
+    const deviceCode = typeof req.body?.deviceCode === 'string' ? req.body.deviceCode : ''
+    if (!config.deviceFlow || !deviceCode || !deviceCodes.has(deviceCode)) {
+      throw new HttpError(400, 'Unknown device sign-in session')
+    }
+    const result = await pollDeviceCode(config.deviceFlow, deviceCode)
+    if ('pending' in result && result.pending) {
+      res.json({ pending: true, slowDown: result.slowDown })
+      return
+    }
+    const token = 'token' in result ? result.token : ''
+    const user = await new GitHubProvider(() => token).whoAmI()
+    setGithubToken(config, tokens, token, user.login)
+    deviceCodes.delete(deviceCode)
+    res.json({ pending: false, configured: true, login: user.login })
   })
 
   router.get('/repos', async (req, res) => {

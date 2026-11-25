@@ -20,18 +20,43 @@ sidecar `comments.json` as a pull request.
 - Standalone HTML export with print styles — use the browser’s **Save as PDF**.
 - Publishing creates a branch, one commit and optionally a PR — without touching your checkout.
 - Base-branch conflict detection: publishing fails if the base moved after the file was opened.
-- GitHub authentication with a PAT or a GitHub OAuth App (both held server-side only).
+- GitHub authentication with a PAT, a GitHub OAuth App, or desktop device flow (held server-side;
+  the desktop app keeps an encrypted copy in the system credential store).
+- Electron desktop builds for Windows, macOS and Linux, with bundled git, a folder picker and a
+  loopback-only server protected by a per-launch secret.
 
 ## Quick start
 
 ```bash
 npm install
-# Local repos, colon-separated absolute paths; aliases are the directory names:
+# Local repos, separated by the platform path delimiter (: on Unix, ; on Windows):
 MARGINALIA_LOCAL_REPOS="$HOME/local-repos/articles:$HOME/local-repos/project-overviews" npm run dev
 ```
 
 Open <http://127.0.0.1:5173>. The Vite dev server proxies `/api` to the API on port 5174.
 `npm run build && npm start` serves the built client and API together on 5174.
+
+## Desktop app
+
+```bash
+npm install                 # installs Electron, electron-builder and optional dugite
+npm run dev:desktop         # build and open the unpacked app
+npm run dist:desktop        # installers in release/: .exe, .dmg, AppImage and .deb
+```
+
+The desktop app starts the same Express server inside Electron on a random free `127.0.0.1` port,
+behind a secret generated for each launch. The page has no Node access; a preload script exposes only
+the folder picker, repo list, external-link opener and the API secret. Window bounds and the list of
+added repositories live in `settings.json` in Electron's user-data folder. **Add** in the file panel
+picks a folder with the native dialog, and **×** beside a repository removes it.
+
+Git comes from [dugite](https://github.com/desktop/dugite) when its binary is available, otherwise
+from `PATH` (override with `MARGINALIA_GIT`). PRs are opened through GitHub's API when a token is
+configured; the `gh` CLI is not required.
+
+For device-flow sign-in, set `MARGINALIA_GITHUB_CLIENT_ID` (a public OAuth client id; no secret is
+needed) or add `deviceClientId` to `settings.json`. The app shows a code to enter at
+github.com/login/device and stores the resulting token with Electron `safeStorage`.
 
 ### GitHub PAT
 
@@ -61,14 +86,18 @@ The env/file token is the fallback after a UI token; **Clear token** removes onl
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MARGINALIA_LOCAL_REPOS` | unset | Colon-separated absolute paths to git repos |
+| `MARGINALIA_LOCAL_REPOS` | unset | Absolute git repo paths separated by the platform delimiter (`:`/`;`) |
 | `GITHUB_TOKEN` | unset | GitHub PAT fallback |
 | `MARGINALIA_TOKEN_FILE` | unset | File containing a PAT, read at startup |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | unset | GitHub OAuth App credentials (enables OAuth sign-in) |
+| `MARGINALIA_GITHUB_CLIENT_ID` | unset | Public client id enabling device-flow sign-in (desktop) |
 | `MARGINALIA_OAUTH_REDIRECT_URI` | `http://127.0.0.1:5174/api/auth/github/callback` | Registered OAuth callback |
 | `MARGINALIA_PUBLIC_URL` | `http://127.0.0.1:5173` | Browser origin the OAuth callback redirects to |
 | `MARGINALIA_DRY_RUN` | `0` | `1` commits to a temp worktree but never pushes/opens a PR |
 | `PORT` | `5174` | API port (and the combined production server port) |
+| `MARGINALIA_API_SECRET` | unset | Require this secret on `/api` requests (the desktop app generates one per launch) |
+| `MARGINALIA_DESKTOP` | `0` | Include desktop-only fields in `/api/config` |
+| `MARGINALIA_GIT` | `git` | Git executable for local repos (desktop prefers dugite) |
 
 ## Workflow
 

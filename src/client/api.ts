@@ -1,13 +1,14 @@
 import { emptyComments, parseComments } from '../shared/comments'
 import type {
   CommentsFile,
+  ConfigResponse,
   FileEntry,
   ProviderId,
-  ProviderInfo,
   PublishRequest,
   PublishResult,
   RepoSummary,
 } from '../shared/types'
+import { desktopBridge } from './desktop'
 
 class ApiError extends Error {
   constructor(
@@ -21,7 +22,11 @@ class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(desktopBridge?.apiSecret ? { 'X-Marginalia-Api-Secret': desktopBridge.apiSecret } : {}),
+      ...init?.headers,
+    },
   })
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string }
@@ -34,7 +39,7 @@ const repoPath = (provider: ProviderId, repo: string) =>
   `/repos/${provider}/${encodeURIComponent(repo)}`
 
 export const api = {
-  config: () => request<{ providers: ProviderInfo[] }>('/config'),
+  config: () => request<ConfigResponse>('/config'),
 
   repos: (provider: ProviderId) => request<RepoSummary[]>(`/repos?provider=${provider}`),
 
@@ -47,6 +52,8 @@ export const api = {
   assetSrc: (provider: ProviderId, repo: string, assetPath: string, ref?: string) =>
     `/api${repoPath(provider, repo)}/asset?path=${encodeURIComponent(assetPath)}${
       ref ? `&ref=${encodeURIComponent(ref)}` : ''
+    }${
+      desktopBridge?.apiSecret ? `&secret=${encodeURIComponent(desktopBridge.apiSecret)}` : ''
     }`,
 
   files: (provider: ProviderId, repo: string, ref?: string) =>
@@ -100,4 +107,21 @@ export const api = {
   clearToken: () => request<{ configured: boolean }>('/token', { method: 'DELETE' }),
 
   oauthUrl: () => request<{ url: string }>('/auth/github/url'),
+
+  githubDeviceStart: () => request<{
+    deviceCode: string
+    userCode: string
+    verificationUri: string
+    interval: number
+    expiresIn: number
+  }>('/auth/github/device', { method: 'POST' }),
+
+  githubDevicePoll: (deviceCode: string) => request<{
+    pending: boolean
+    slowDown?: boolean
+    login?: string
+  }>('/auth/github/device/poll', {
+    method: 'POST',
+    body: JSON.stringify({ deviceCode }),
+  }),
 }

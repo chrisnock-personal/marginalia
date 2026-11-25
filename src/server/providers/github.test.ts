@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { GitHubProvider } from './github'
+import { gitHubPullRequest, githubRepoFromRemote, GitHubProvider } from './github'
 
 interface Call {
   url: string
@@ -84,4 +84,33 @@ test('GitHub provider sends the PAT and builds a commit and PR', async () => {
     { path: 'docs/assets/old.png', mode: '100644', type: 'blob', sha: null },
     'deletions are sent to the GitHub tree API with a null sha',
   )
+})
+
+test('GitHub remotes resolve to owner/name in all common URL forms', () => {
+  assert.equal(githubRepoFromRemote('https://github.com/chrisnock/marginalia.git'), 'chrisnock/marginalia')
+  assert.equal(githubRepoFromRemote('git@github.com:chrisnock/marginalia.git'), 'chrisnock/marginalia')
+  assert.equal(githubRepoFromRemote('ssh://git@github.com/chrisnock/marginalia'), 'chrisnock/marginalia')
+  assert.equal(githubRepoFromRemote('/home/chris/local-repos/marginalia'), null)
+})
+
+test('a PR can be opened through the API without the gh CLI', async () => {
+  const calls: Call[] = []
+  const url = await gitHubPullRequest({
+    repo: 'o/r',
+    head: 'marginalia/docs',
+    base: 'main',
+    title: 'Docs',
+    body: 'From the desktop app',
+    token: 'device-token',
+    fetchImpl: fakeFetch(calls),
+  })
+  assert.equal(url, 'https://github.com/o/r/pull/1')
+  const pr = calls.find((call) => call.url.endsWith('/pulls'))
+  assert.equal(pr?.headers.get('Authorization'), 'Bearer device-token')
+  assert.deepEqual(JSON.parse(pr!.body!), {
+    title: 'Docs',
+    body: 'From the desktop app',
+    head: 'marginalia/docs',
+    base: 'main',
+  })
 })

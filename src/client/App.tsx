@@ -5,9 +5,11 @@ import type {
   Comment,
   CommentAnchor,
   CommentsFile,
+  ConfigResponse,
   FileChange,
   FileEntry,
   ImageTarget,
+  LocalRepoInfo,
   ProviderId,
   ProviderInfo,
   PublishResult,
@@ -15,6 +17,8 @@ import type {
 } from '../shared/types'
 import { api } from './api'
 import AssetDialog, { type AssetView } from './AssetDialog'
+import { desktopBridge, isDesktop } from './desktop'
+import DeviceFlowDialog from './DeviceFlowDialog'
 import { relativeSrcFor, repoPathFor, rewriteReferences } from './assetPaths'
 import CommentsPanel from './CommentsPanel'
 import { updateDocEdit } from './docEdits'
@@ -23,6 +27,7 @@ import Logo from './Logo'
 import { buildExportHtml, downloadHtml, inlineImageSources, printHtml, resolveExportImageSource } from './export'
 import ExportDialog from './ExportDialog'
 import PatDialog from './PatDialog'
+import RepoManager from './RepoManager'
 import { clearImagePreviews, previewToSrc, setImagePreview } from './repoImage'
 import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
@@ -57,6 +62,11 @@ function groupByFolder(files: FileEntry[]): Array<[string, FileEntry[]]> {
 
 export default function App() {
   const [config, setConfig] = useState<ProviderInfo[]>([])
+  const [desktopConfig, setDesktopConfig] = useState<{
+    desktop: boolean
+    localRepos: LocalRepoInfo[]
+  }>({ desktop: false, localRepos: [] })
+  const [repoBusy, setRepoBusy] = useState(false)
   const [provider, setProvider] = useState<ProviderId>('local')
   const [repos, setRepos] = useState<RepoSummary[]>([])
   const [repoId, setRepoId] = useState('')
@@ -85,6 +95,7 @@ export default function App() {
   const [publishConflict, setPublishConflict] = useState(false)
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
   const [patOpen, setPatOpen] = useState(false)
+  const [deviceOpen, setDeviceOpen] = useState(false)
   // Side panels can be hidden so only the writing column remains; the choice
   // is remembered per browser.
   const [panels, setPanels] = useState(loadPanels)
@@ -131,15 +142,19 @@ export default function App() {
     if (window.matchMedia('(max-width: 760px)').matches) setNarrowHidden(true)
   }
 
-  const refreshConfig = async () => {
+  const refreshConfig = async (): Promise<ConfigResponse> => {
     const result = await api.config()
-    setConfig(result.providers)
-    return result.providers
+    setConfig((current) =>
+      JSON.stringify(current) === JSON.stringify(result.providers) ? current : result.providers,
+    )
+    setDesktopConfig({ desktop: result.desktop, localRepos: result.localRepos })
+    return result
   }
 
   useEffect(() => {
     refreshConfig()
-      .then((providers) => {
+      .then((result) => {
+        const providers = result.providers
         const first = providers.find((p) => p.id === 'local' && p.configured)
           ?? providers.find((p) => p.configured)
         if (first) setProvider(first.id)
@@ -156,6 +171,8 @@ export default function App() {
     if (auth) window.history.replaceState({}, '', window.location.pathname)
   }, [])
 
+  // Switching provider discards staged work; adding a repo or signing in only
+  // refreshes the available repositories.
   useEffect(() => {
     setRepoId('')
     setFiles([])
@@ -170,8 +187,14 @@ export default function App() {
     commentsLoaded.current = ''
     clearImagePreviews()
     setPublishResult(null)
+  }, [provider])
+
+  useEffect(() => {
     const info = config.find((p) => p.id === provider)
-    if (!info?.configured) return
+    if (!info?.configured) {
+      setRepos([])
+      return
+    }
     let cancelled = false
     api.repos(provider)
       .then((result) => { if (!cancelled) setRepos(result) })
@@ -244,6 +267,43 @@ export default function App() {
     setRepoId(id)
     setPath('')
     setFiles([])
+  }
+
+  /** Desktop only: ask the OS for a folder, then let the server register it. */
+  const addLocalRepo = async () => {
+    if (!desktopBridge) return
+    setRepoBusy(true)
+    setError(null)
+    try {
+      const folder = await desktopBridge.chooseFolder()
+      if (folder) {
+        await desktopBridge.addRepo(folder)
+        await refreshConfig()
+        setProvider('local')
+        setNotice(`Added ${folder}`)
+      }
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setRepoBusy(false)
+    }
+  }
+
+  const removeLocalRepo = async (id: string) => {
+    if (!desktopBridge) return
+    setRepoBusy(true)
+    try {
+      await desktopBridge.removeRepo(id)
+      if (repoId === id) {
+        setRepoId('')
+        setPath('')
+      }
+      await refreshConfig()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setRepoBusy(false)
+    }
   }
 
   /** Show repo-relative images from the current branch/asset endpoint. */
@@ -629,6 +689,14 @@ export default function App() {
                 ))}
               </select>
             </div>
+            {desktopConfig.desktop && (
+              <RepoManager
+                repos={desktopConfig.localRepos}
+                busy={repoBusy}
+                onAdd={() => { void addLocalRepo() }}
+                onRemove={(id) => { void removeLocalRepo(id) }}
+              />
+            )}
             <div className="file-tree">
               {repoId && files.length === 0 && <p className="hint">No Markdown files in this repository.</p>}
               {fileGroups.map(([folder, entries]) => (
@@ -760,7 +828,10 @@ export default function App() {
         <PatDialog
           login={github?.detail?.replace('Authenticated as ', '') ?? null}
           oauthConfigured={Boolean(github?.oauthConfigured)}
+          deviceFlowConfigured={Boolean(github?.deviceFlowConfigured)}
+          desktop={isDesktop}
           onClose={() => setPatOpen(false)}
+          onDeviceFlow={() => { setPatOpen(false); setDeviceOpen(true) }}
           onOAuth={async () => {
             const { url } = await api.oauthUrl()
             window.location.href = url
@@ -768,8 +839,20 @@ export default function App() {
           onSave={async (token) => { await api.setToken(token); await refreshConfig(); setProvider('github') }}
           onClear={async () => {
             await api.clearToken()
-            const providers = await refreshConfig()
-            if (provider === 'github' && providers.some((p) => p.id === 'local' && p.configured)) setProvider('local')
+            const result = await refreshConfig()
+            if (provider === 'github' && result.providers.some((p) => p.id === 'local' && p.configured)) setProvider('local')
+          }}
+        />
+      )}
+      {deviceOpen && (
+        <DeviceFlowDialog
+          onClose={() => setDeviceOpen(false)}
+          onSuccess={async () => {
+            setDeviceOpen(false)
+            setPatOpen(false)
+            setNotice('Signed in with GitHub')
+            await refreshConfig()
+            setProvider('github')
           }}
         />
       )}
