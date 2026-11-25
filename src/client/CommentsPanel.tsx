@@ -61,19 +61,15 @@ export default function CommentsPanel({
   }
 
   const targetLabel = (comment: Comment) =>
-    comment.target?.type === 'image' ? `Image: ${comment.target.path}` : comment.anchor?.quote
+    comment.target?.type === 'image' ? `Image: ${comment.target.path}` : `“${comment.anchor?.quote ?? ''}”`
 
   return (
-    <aside className="comments-panel" aria-label="Comments">
-      <header className="panel-header">
-        <h2>Comments</h2>
-        {visible.length > 0 && <span className="count">{visible.length}</span>}
-      </header>
+    <aside id="comments-panel" className="comments-panel" aria-label="Comments">
 
       {(pendingAnchor || pendingTarget) && (
         <div className="composer">
           <div className="composer-quote">
-            {pendingTarget ? `Image: ${pendingTarget.path}` : pendingAnchor?.quote}
+            {pendingTarget ? `Image: ${pendingTarget.path}` : `“${pendingAnchor?.quote ?? ''}”`}
           </div>
           <textarea
             autoFocus

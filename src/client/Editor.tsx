@@ -196,8 +196,8 @@ export default function Editor({
         {tool('B', () => editor.chain().focus().toggleBold().run(), state?.bold, 'Bold', 'tool-bold')}
         {tool('I', () => editor.chain().focus().toggleItalic().run(), state?.italic, 'Italic', 'tool-italic')}
         {tool('Heading', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), state?.heading, 'Heading 2')}
-        {tool('• List', () => editor.chain().focus().toggleBulletList().run(), state?.bullet, 'Bullet list')}
-        {tool('1. List', () => editor.chain().focus().toggleOrderedList().run(), state?.ordered, 'Ordered list')}
+        {tool('List', () => editor.chain().focus().toggleBulletList().run(), state?.bullet, 'Bullet list')}
+        {tool('Numbers', () => editor.chain().focus().toggleOrderedList().run(), state?.ordered, 'Ordered list')}
         {tool('Quote', () => editor.chain().focus().toggleBlockquote().run(), state?.quote, 'Quote')}
         {tool('Code', () => editor.chain().focus().toggleCodeBlock().run(), state?.codeBlock, 'Code block')}
         <span className="toolbar-divider" />
@@ -221,9 +221,6 @@ export default function Editor({
             {tool('− col', () => editor.chain().focus().deleteColumn().run(), false, 'Delete column')}
           </>
         )}
-        <span className="toolbar-divider" />
-        {tool('↶', () => editor.chain().focus().undo().run(), false, 'Undo')}
-        {tool('↷', () => editor.chain().focus().redo().run(), false, 'Redo')}
         <span className="toolbar-spacer" />
         <button
           type="button"
