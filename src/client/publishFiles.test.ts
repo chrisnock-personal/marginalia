@@ -68,6 +68,30 @@ test('no Markdown edits still publishes staged assets and comments.json', () => 
   assert.deepEqual(rows.map((row) => row.status), ['added', 'comments'])
 })
 
+test('new Markdown files are published as added alongside existing edits', () => {
+  const rows = buildPublishFiles({
+    docEdits: {
+      'docs/page.md': '# New page\n',
+      'docs/new.md': '# Duplicate that should not win\n',
+    },
+    newFiles: {
+      'docs/new.md': '# New\n\n',
+      'guides/intro.markdown': '# Intro\n\n',
+    },
+    assets: [],
+    comments: emptyComments(),
+  })
+
+  assert.deepEqual(rows.map((row) => row.change.path), [
+    'docs/page.md',
+    'docs/new.md',
+    'guides/intro.markdown',
+    'comments.json',
+  ])
+  assert.deepEqual(rows.map((row) => row.status), ['edited', 'added', 'added', 'comments'])
+  assert.equal(rows[1].change.content, '# New\n\n')
+})
+
 test('an add and delete are not a move unless recorded as one', () => {
   const rows = buildPublishFiles({
     docEdits: {},

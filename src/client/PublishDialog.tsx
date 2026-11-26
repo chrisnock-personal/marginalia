@@ -4,6 +4,7 @@ import type { PublishFileRow } from './publishFiles'
 interface Props {
   branch: string
   path: string
+  isNew?: boolean
   files: PublishFileRow[]
   busy: boolean
   error: string | null
@@ -29,6 +30,7 @@ function describeFile(file: PublishFileRow): string {
 export default function PublishDialog({
   branch: initialBranch,
   path,
+  isNew = false,
   files,
   busy,
   error,
@@ -38,9 +40,12 @@ export default function PublishDialog({
   onPublish,
 }: Props) {
   const [branch, setBranch] = useState(initialBranch)
-  const [commitMessage, setCommitMessage] = useState(`Edit ${path.split('/').pop()}`)
-  const [title, setTitle] = useState(`Docs: update ${path.split('/').pop()}`)
-  const [body, setBody] = useState(`Edits to \`${path}\` with inline comments in comments.json.`)
+  const name = path.split('/').pop() ?? 'file'
+  const [commitMessage, setCommitMessage] = useState(`${isNew ? 'Add' : 'Edit'} ${name}`)
+  const [title, setTitle] = useState(`Docs: ${isNew ? 'add' : 'update'} ${name}`)
+  const [body, setBody] = useState(
+    `${isNew ? 'Adds' : 'Edits to'} \`${path}\` with inline comments in comments.json.`,
+  )
 
   const submit = (event: FormEvent) => {
     event.preventDefault()

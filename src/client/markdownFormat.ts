@@ -167,7 +167,8 @@ function blankCounts(lines: string[], start: number, end: number): { leading: nu
  * already-present newline untouched avoids adding an extra blank line.
  */
 function matchFinalNewline(output: string, source: string): string {
-  const sourceHasFinalNewline = source.endsWith('\n')
+  // A new file has no source yet; give it the usual final newline.
+  const sourceHasFinalNewline = source === '' || source.endsWith('\n')
   const outputHasFinalNewline = output.endsWith('\n')
   if (sourceHasFinalNewline === outputHasFinalNewline) return output
   return sourceHasFinalNewline
