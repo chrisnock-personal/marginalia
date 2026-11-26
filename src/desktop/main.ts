@@ -28,9 +28,12 @@ let openWindow: (() => void) | null = null
  * service Electron falls back to `basic_text`, a hard-coded key: that is no
  * better than a plain file, so treat it as unavailable.
  */
+function insecureBackend(): boolean {
+  return process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'
+}
+
 function secureStorageAvailable(): boolean {
-  if (!safeStorage.isEncryptionAvailable()) return false
-  return process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'
+  return safeStorage.isEncryptionAvailable() && !insecureBackend()
 }
 
 /** Hand only web links to the system; other schemes can launch local programs. */
@@ -63,11 +66,16 @@ async function start(): Promise<void> {
       delete settings.token
       persist()
     }
-  } else if (settings.token) {
-    // Saved without real encryption (or the keyring has gone): don't keep it.
+  } else if (settings.token && insecureBackend()) {
+    // Only Electron's hard-coded basic_text key is in use, so the saved token
+    // is as good as plain text: remove it.
     console.warn('No system credential store; removing the saved GitHub token')
     delete settings.token
     persist()
+  } else if (settings.token) {
+    // The keyring may just be locked or not running yet: keep the saved token
+    // for next time, but don't use it now.
+    console.warn('System credential store unavailable; not loading the saved GitHub token')
   }
   const server = createServer({
     ...base,
