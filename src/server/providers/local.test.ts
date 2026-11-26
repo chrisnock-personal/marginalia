@@ -102,6 +102,53 @@ test('local provider reads files and publishes a branch with comments.json', asy
   }
 })
 
+test('local provider publishes a brand-new nested Markdown file', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'marginalia-new-file-test-'))
+  try {
+    const remote = join(dir, 'remote.git')
+    const repo = join(dir, 'repo')
+    mkdirSync(remote)
+    mkdirSync(join(repo, 'docs'), { recursive: true })
+    git(['init', '--bare', '--initial-branch=main'], remote)
+    git(['init', '--initial-branch=main'], repo)
+    git(['config', 'user.name', 'Test'], repo)
+    git(['config', 'user.email', 'test@localhost'], repo)
+    writeFileSync(join(repo, 'docs', 'guide.md'), '# Guide\n')
+    git(['add', '.'], repo)
+    git(['commit', '-m', 'initial'], repo)
+    git(['remote', 'add', 'origin', remote], repo)
+
+    const provider = new LocalGitProvider(new Map([['test', repo]]))
+    assert.equal(await provider.readFile('test', 'docs/new-page.md'), null)
+    const result = await provider.publish({
+      provider: 'local',
+      repo: 'test',
+      baseSha: await provider.headSha('test', 'main'),
+      branch: 'marginalia/new-file',
+      commitMessage: 'Add new page',
+      files: [{ path: 'docs/new-page.md', content: '# New page\n\nHello.\n' }],
+      comments: {
+        version: 1,
+        comments: [{
+          id: 'c_new',
+          path: 'docs/new-page.md',
+          anchor: { quote: 'Hello', prefix: '', suffix: '.', start: 12, end: 17 },
+          body: 'On a new page?',
+          author: 'Chris',
+          createdAt: '2026-11-25T10:00:00.000Z',
+          resolved: false,
+        }],
+      },
+    })
+
+    assert.equal(result.pushed, true)
+    assert.match(git(['show', 'marginalia/new-file:docs/new-page.md'], remote), /# New page/)
+    assert.match(git(['show', 'marginalia/new-file:comments.json'], remote), /On a new page\?/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('local provider uses commits pushed to origin while the checkout is behind', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'marginalia-origin-test-'))
   try {

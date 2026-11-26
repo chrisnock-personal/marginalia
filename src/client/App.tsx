@@ -26,9 +26,11 @@ import Editor from './Editor'
 import Logo from './Logo'
 import { buildExportHtml, downloadHtml, inlineImageSources, printHtml, resolveExportImageSource } from './export'
 import ExportDialog from './ExportDialog'
+import { newMarkdownFile } from './newFile'
+import NewFileDialog from './NewFileDialog'
 import PatDialog from './PatDialog'
 import RepoManager from './RepoManager'
-import { clearImagePreviews, previewToSrc, setImagePreview } from './repoImage'
+import { clearImagePreviews, previewToSrc, removeImagePreview, setImagePreview } from './repoImage'
 import { buildPublishFiles } from './publishFiles'
 import PublishDialog from './PublishDialog'
 
@@ -75,11 +77,17 @@ export default function App() {
   const [original, setOriginal] = useState('')
   const [markdown, setMarkdown] = useState('')
   const [assets, setAssets] = useState<FileChange[]>([])
+  // Staged image path -> Markdown file it was pasted into, so discarding a new
+  // file can also discard its images.
+  const [assetDocs, setAssetDocs] = useState<Record<string, string>>({})
   // New path -> original repo path for staged moves. Only used to label rows in
   // the publish dialog; never sent to the API.
   const [movedFrom, setMovedFrom] = useState<Record<string, string>>({})
   const [repoAssets, setRepoAssets] = useState<FileEntry[]>([])
   const [docEdits, setDocEdits] = useState<Record<string, string>>({})
+  // New Markdown files have no base commit, so their content lives here until
+  // publish rather than in docEdits.
+  const [newFiles, setNewFiles] = useState<Record<string, string>>({})
   const [comments, setComments] = useState(emptyComments().comments)
   const [commentsDirty, setCommentsDirty] = useState(false)
   const [pendingAnchor, setPendingAnchor] = useState<CommentAnchor | null>(null)
@@ -113,21 +121,28 @@ export default function App() {
     })
   }
   const [assetOpen, setAssetOpen] = useState(false)
+  const [newFileOpen, setNewFileOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [branch, setBranch] = useState('marginalia/edit')
   const editorRef = useRef<TiptapEditor | null>(null)
   const baseMarkdown = useRef<Record<string, string>>({})
   // Read by the load effect, which must not re-run on every keystroke.
   const docEditsRef = useRef(docEdits)
+  const newFilesRef = useRef(newFiles)
   const commentsLoaded = useRef('')
   const baseRef = repos.find((repo) => repo.id === repoId)?.defaultBranch
 
   useEffect(() => { docEditsRef.current = docEdits }, [docEdits])
+  useEffect(() => { newFilesRef.current = newFiles }, [newFiles])
 
   /** Store an edit under its path so switching files cannot lose it. */
   const writeDocEdit = (filePath: string, content: string) => {
-    const base = filePath === path ? original : baseMarkdown.current[filePath] ?? ''
-    setDocEdits((current) => updateDocEdit(current, filePath, content, base))
+    if (filePath in newFilesRef.current) {
+      setNewFiles((current) => ({ ...current, [filePath]: content }))
+    } else {
+      const base = filePath === path ? original : baseMarkdown.current[filePath] ?? ''
+      setDocEdits((current) => updateDocEdit(current, filePath, content, base))
+    }
     if (filePath === path) setMarkdown(content)
   }
 
@@ -140,6 +155,55 @@ export default function App() {
     setPublishResult(null)
     setNotice(null)
     if (window.matchMedia('(max-width: 760px)').matches) setNarrowHidden(true)
+  }
+
+  /** Validate and stage a brand-new Markdown file, then open it. */
+  const createNewFile = (name: string, folder: string) => {
+    if (!repoId) throw new Error('Choose a repository first')
+    const created = newMarkdownFile(name, folder)
+    // Compare case-insensitively: macOS and Windows checkouts can't hold both.
+    const taken = (other: string) => other.toLowerCase() === created.path.toLowerCase()
+    if (files.some((file) => taken(file.path)) || Object.keys(newFiles).some(taken)) {
+      throw new Error(`${created.path} already exists in this repository`)
+    }
+    setNewFiles((current) => ({ ...current, [created.path]: created.content }))
+    openFile(created.path)
+    setNotice(`Created ${created.path}; it will be added to the PR`)
+  }
+
+  /** Remove an unpublished new file, its comments and the images staged in it. */
+  const discardNewFile = (filePath: string) => {
+    const stagedPaths = assets.filter((asset) => assetDocs[asset.path] === filePath).map((asset) => asset.path)
+    for (const assetPath of stagedPaths) removeImagePreview(relativeSrcFor(filePath, assetPath))
+    setNewFiles((current) => {
+      const { [filePath]: _discarded, ...rest } = current
+      return rest
+    })
+    setDocEdits((current) => {
+      const { [filePath]: _discarded, ...rest } = current
+      return rest
+    })
+    setAssets((current) => current.filter((asset) => !stagedPaths.includes(asset.path)))
+    setAssetDocs((current) => {
+      const rest = { ...current }
+      for (const assetPath of stagedPaths) delete rest[assetPath]
+      return rest
+    })
+    setMovedFrom((current) => {
+      const rest = { ...current }
+      for (const [newPath, oldPath] of Object.entries(rest)) {
+        if (stagedPaths.includes(newPath) || stagedPaths.includes(oldPath)) delete rest[newPath]
+      }
+      return rest
+    })
+    if (comments.some((comment) => comment.path === filePath)) setCommentsDirty(true)
+    setComments((current) => current.filter((comment) => comment.path !== filePath))
+    if (path === filePath) {
+      setPath('')
+      setMarkdown('')
+      setOriginal('')
+    }
+    setNotice(`Discarded ${filePath}`)
   }
 
   const refreshConfig = async (): Promise<ConfigResponse> => {
@@ -178,9 +242,11 @@ export default function App() {
     setFiles([])
     setPath('')
     setAssets([])
+    setAssetDocs({})
     setMovedFrom({})
     setRepoAssets([])
     setDocEdits({})
+    setNewFiles({})
     baseMarkdown.current = {}
     setComments(emptyComments().comments)
     setCommentsDirty(false)
@@ -208,8 +274,10 @@ export default function App() {
     setFiles([])
     setRepoAssets([])
     setAssets([])
+    setAssetDocs({})
     setMovedFrom({})
     setDocEdits({})
+    setNewFiles({})
     setMarkdown('')
     setOriginal('')
     setComments(emptyComments().comments)
@@ -237,18 +305,26 @@ export default function App() {
     // switching pages must not throw away notes written on the previous one.
     const commentsKey = `${provider}/${repoId}/${reloadKey}`
     const needComments = commentsLoaded.current !== commentsKey
+    const newContent = newFilesRef.current[path]
     // Read the page at the exact commit the publish will build on and check
-    // against, so stale text can never be written over newer work.
+    // against, so stale text can never be written over newer work. A new file
+    // has no base content, so its staged text is used instead of GET /file.
     api.head(provider, repoId, baseRef)
       .then((head) => Promise.all([
-        api.file(provider, repoId, path, head.sha),
+        newContent !== undefined
+          ? Promise.resolve({ path, content: newContent })
+          : api.file(provider, repoId, path, head.sha),
         needComments ? api.comments(provider, repoId, head.sha) : Promise.resolve(null),
         head,
       ]))
       .then(([file, loaded, head]) => {
         if (cancelled) return
-        setOriginal(file.content)
-        setMarkdown(docEditsRef.current[path] ?? file.content)
+        setOriginal(newContent !== undefined ? '' : file.content)
+        setMarkdown(
+          newContent !== undefined
+            ? (newFilesRef.current[path] ?? file.content)
+            : (docEditsRef.current[path] ?? file.content),
+        )
         if (loaded) {
           setComments(loaded.comments)
           setCommentsDirty(false)
@@ -322,6 +398,7 @@ export default function App() {
       const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
       const assetPath = [dir, src].filter(Boolean).join('/')
       setAssets((current) => [...current, { path: assetPath, content: base64, encoding: 'base64' }])
+      setAssetDocs((current) => ({ ...current, [assetPath]: path }))
       setNotice(`Staged ${file.name} — it will be added to the PR`)
     }
     reader.readAsDataURL(file)
@@ -343,8 +420,8 @@ export default function App() {
   const rewriteAllReferences = async (oldPath: string, newPath: string | null) => {
     const base = await loadBaseMarkdown()
     const updates: Record<string, string> = {}
-    for (const filePath of Object.keys(base)) {
-      const current = docEdits[filePath] ?? base[filePath]
+    for (const filePath of [...Object.keys(base), ...Object.keys(newFiles)]) {
+      const current = newFiles[filePath] ?? docEdits[filePath] ?? base[filePath]
       const next = rewriteReferences(current, filePath, oldPath, newPath)
       if (next !== current) updates[filePath] = next
     }
@@ -391,6 +468,11 @@ export default function App() {
         const { [oldPath]: origin = oldPath, ...rest } = current
         return origin === newPath ? rest : { ...rest, [newPath]: origin }
       })
+      setAssetDocs((current) => {
+        const owner = current[oldPath]
+        const { [oldPath]: _old, ...rest } = current
+        return owner ? { ...rest, [newPath]: owner } : rest
+      })
       setComments((current) => current.map((comment) =>
         comment.target?.path === oldPath
           ? { ...comment, target: { ...comment.target, path: newPath } }
@@ -417,6 +499,10 @@ export default function App() {
         const { [assetPath]: _removed, ...rest } = current
         return rest
       })
+      setAssetDocs((current) => {
+        const { [assetPath]: _removed, ...rest } = current
+        return rest
+      })
       setComments((current) => current.filter((comment) => comment.target?.path !== assetPath))
       setCommentsDirty(true)
       setNotice(`Deleted ${assetPath}; image embeds removed from Markdown`)
@@ -427,7 +513,7 @@ export default function App() {
 
   const commentsFile: CommentsFile = { version: 1, comments }
   const publishFileRows = buildPublishFiles({
-    docEdits, assets, movedFrom, comments: commentsFile,
+    docEdits, newFiles, assets, movedFrom, comments: commentsFile,
   })
 
   const openPublish = () => {
@@ -456,9 +542,23 @@ export default function App() {
       })
       setPublishResult(result)
       setOriginal(markdown)
+      // New files exist only on the pushed branch until the PR is merged, so
+      // they can't be read from the base branch: leave them out of the list.
+      const published = Object.keys(newFiles)
+      if (published.length) {
+        setNotice(`${published.join(', ')} ${published.length === 1 ? 'is' : 'are'} on the new branch and will appear in the file list once the pull request is merged`)
+        // The open page may be one of them; it can't be reloaded from the base
+        // branch any more, so close it rather than leave it half-tracked.
+        if (path in newFiles) {
+          setPath('')
+          setMarkdown('')
+        }
+      }
       setAssets([])
+      setAssetDocs({})
       setMovedFrom({})
       setDocEdits({})
+      setNewFiles({})
       setCommentsDirty(false)
       baseMarkdown.current = {}
       clearImagePreviews()
@@ -514,8 +614,10 @@ export default function App() {
   const reloadFile = () => {
     setPublishOpen(false)
     setAssets([])
+    setAssetDocs({})
     setMovedFrom({})
     setDocEdits({})
+    setNewFiles({})
     setCommentsDirty(false)
     commentsLoaded.current = ''
     baseMarkdown.current = {}
@@ -553,7 +655,8 @@ export default function App() {
 
   const github = config.find((p) => p.id === 'github')
   const anyConfigured = config.some((p) => p.configured)
-  const dirty = Object.keys(docEdits).length > 0 || assets.length > 0 || commentsDirty
+  const dirty = Object.keys(docEdits).length > 0 || Object.keys(newFiles).length > 0 ||
+    assets.length > 0 || commentsDirty
 
   useEffect(() => {
     if (!dirty) return
@@ -574,7 +677,17 @@ export default function App() {
 
   const docComments = comments.filter((comment) => comment.path === path)
   const changedFiles = publishFileRows.filter((row) => row.status !== 'comments').length
-  const fileGroups = groupByFolder(files)
+  const newEntries: FileEntry[] = Object.keys(newFiles)
+    .filter((newPath) => !files.some((file) => file.path === newPath))
+    .map((newPath) => ({ path: newPath, type: 'blob' }))
+  const visibleFiles = [...files, ...newEntries]
+  const fileGroups = groupByFolder(visibleFiles)
+  const folders = [...new Set(visibleFiles.map((file) => {
+    const index = file.path.lastIndexOf('/')
+    return index >= 0 ? file.path.slice(0, index) : ''
+  }).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const defaultFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+  const isNewFile = path in newFiles
   const slash = path.lastIndexOf('/')
 
   const filesOpen = panels.files && !narrowHidden
@@ -636,6 +749,9 @@ export default function App() {
                   </svg>
                 </summary>
                 <div className="more-menu">
+                  {repoId && (
+                    <button type="button" onClick={(e) => { closeMenu(e); setNewFileOpen(true) }}>New file</button>
+                  )}
                   <button type="button" onClick={(e) => { closeMenu(e); setExportOpen(true) }}>Export</button>
                   <button type="button" onClick={(e) => { closeMenu(e); setAssetOpen(true) }}>Images ({assetViews.length})</button>
                   <button type="button" onClick={(e) => { closeMenu(e); togglePanel('comments') }}>
@@ -690,6 +806,14 @@ export default function App() {
                 ))}
               </select>
             </div>
+            <button
+              type="button"
+              className="bar-button new-file"
+              disabled={!repoId}
+              onClick={() => setNewFileOpen(true)}
+            >
+              + New file
+            </button>
             {desktopConfig.desktop && (
               <RepoManager
                 repos={desktopConfig.localRepos}
@@ -699,21 +823,33 @@ export default function App() {
               />
             )}
             <div className="file-tree">
-              {repoId && files.length === 0 && <p className="hint">No Markdown files in this repository.</p>}
+              {repoId && visibleFiles.length === 0 && <p className="hint">No Markdown files in this repository.</p>}
               {fileGroups.map(([folder, entries]) => (
                 <div key={folder} className="file-group">
                   {folder && <h2 className="folder">{folder}</h2>}
                   <ul className="file-list">
                     {entries.map((file) => (
-                      <li key={file.path}>
+                      <li key={file.path} className={file.path in newFiles ? 'file-row new' : 'file-row'}>
                         <button
                           type="button"
-                          className={file.path === path ? 'file active' : 'file'}
+                          className={`file${file.path === path ? ' active' : ''}${file.path in newFiles ? ' file-new' : ''}`}
                           aria-current={file.path === path ? 'page' : undefined}
                           onClick={() => openFile(file.path)}
                         >
                           {file.path.split('/').pop()}
+                          {file.path in newFiles && <span className="new-badge">new</span>}
                         </button>
+                        {file.path in newFiles && (
+                          <button
+                            type="button"
+                            className="discard-new"
+                            aria-label={`Discard ${file.path}`}
+                            title="Discard this new file"
+                            onClick={() => discardNewFile(file.path)}
+                          >
+                            ×
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -758,6 +894,9 @@ export default function App() {
                     ? 'Choose a repository, then open a file to start writing.'
                     : 'Connect a git source to start writing.'}
               </p>
+              {repoId && (
+                <button type="button" className="primary" onClick={() => setNewFileOpen(true)}>New file</button>
+              )}
               {!filesOpen && (
                 <button type="button" className="bar-button" onClick={() => togglePanel('files')}>Show files</button>
               )}
@@ -783,6 +922,7 @@ export default function App() {
         <PublishDialog
           branch={branch}
           path={path}
+          isNew={isNewFile}
           files={publishFileRows}
           busy={publishing}
           error={publishError}
@@ -799,6 +939,14 @@ export default function App() {
           onRename={(oldPath, newPath) => { void renameAsset(oldPath, newPath) }}
           onDelete={(assetPath) => { void deleteAsset(assetPath) }}
           onClose={() => setAssetOpen(false)}
+        />
+      )}
+      {newFileOpen && (
+        <NewFileDialog
+          defaultFolder={defaultFolder}
+          folders={folders}
+          onClose={() => setNewFileOpen(false)}
+          onCreate={createNewFile}
         />
       )}
       {exportOpen && (

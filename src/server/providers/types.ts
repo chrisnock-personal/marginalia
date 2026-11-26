@@ -37,16 +37,4 @@ export function checkBranch(branch: string): string {
   return branch
 }
 
-export function checkRelativePath(path: string): string {
-  if (
-    !path ||
-    path.startsWith('/') ||
-    path.includes('\0') ||
-    path.split('/').includes('..') ||
-    path.split('/').includes('.') ||
-    path.includes('\\')
-  ) {
-    throw new Error(`Invalid relative path: ${path}`)
-  }
-  return path
-}
+export { checkRelativePath } from '../../shared/paths'

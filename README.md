@@ -14,6 +14,7 @@ sidecar `comments.json` as a pull request.
   same PR as the edit.
 - Asset manager: rename, move and delete images; Markdown references are rewritten in every file of
   the repo and included in the same PR.
+- New Markdown files can be created in the interface and published in the same PR as edits.
 - Two git sources: configured local repositories (git CLI) and GitHub (REST API).
 - Comments anchored to text or to an image, with threaded replies, stored in a separate
   `comments.json` in the PR.
@@ -113,9 +114,13 @@ The env/file token is the fallback after a UI token; **Clear token** removes onl
 5. Select text or click an image, then click **+ Comment** and write the note. Use **Reply** to
    continue a thread.
 6. Use **Export** for a standalone HTML view with print styles, then **Save as PDF** in the browser.
-7. Click **Publish PR**, check the branch/commit/PR details, and publish.
-8. If the base branch moved in the meantime, publishing returns a conflict prompt and offers a reload.
-9. The PR contains the edited Markdown, reference rewrites, file changes for assets and `comments.json`.
+7. Use **+ New file** to create a page: give it a name and folder (`.md` is added automatically), or
+   discard it from the file list before publishing if you change your mind. New files open straight
+   away with a title heading and are listed as **added** in the publish dialog.
+8. Click **Publish**, check the branch/commit/PR details, and publish.
+9. If the base branch moved in the meantime, publishing returns a conflict prompt and offers a reload.
+10. The PR contains the edited/new Markdown, reference rewrites, file changes for assets and
+    `comments.json`.
 
 Example `comments.json`:
 

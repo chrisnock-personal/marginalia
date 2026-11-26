@@ -141,3 +141,8 @@ test('escaped pipes and inline code in cells survive restoration and compaction'
     '',
   ].join('\n'))
 })
+
+test('a new file (empty source) keeps a final newline after editing', () => {
+  assert.equal(normalizeMarkdown('# Release notes\n\nFirst draft.', ''), '# Release notes\n\nFirst draft.\n')
+  assert.equal(normalizeMarkdown('# Release notes\n\nFirst draft.\n', ''), '# Release notes\n\nFirst draft.\n')
+})

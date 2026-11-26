@@ -18,6 +18,13 @@ export function clearImagePreviews(): void {
   previews.clear()
 }
 
+/** Drop one staged preview, e.g. when its unpublished new file is discarded. */
+export function removeImagePreview(src: string): void {
+  const url = previews.get(src)
+  if (url) URL.revokeObjectURL(url)
+  previews.delete(src)
+}
+
 /** Reverse lookup so exports can replace temporary blob URLs with repo paths. */
 export function previewToSrc(url: string): string | undefined {
   for (const [src, preview] of previews) if (preview === url) return src
