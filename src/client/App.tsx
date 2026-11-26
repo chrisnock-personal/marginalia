@@ -487,6 +487,12 @@ export default function App() {
       const published = Object.keys(newFiles)
       if (published.length) {
         setNotice(`${published.join(', ')} ${published.length === 1 ? 'is' : 'are'} on the new branch and will appear in the file list once the pull request is merged`)
+        // The open page may be one of them; it can't be reloaded from the base
+        // branch any more, so close it rather than leave it half-tracked.
+        if (path in newFiles) {
+          setPath('')
+          setMarkdown('')
+        }
       }
       setAssets([])
       setAssetDocs({})
