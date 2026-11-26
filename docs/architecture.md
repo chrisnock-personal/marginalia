@@ -16,6 +16,18 @@ no database and keeps no server-side copy of documents.
 | Local provider | `src/server/providers/local.ts` | Reads committed content (following `origin`), publishes via a temporary git worktree |
 | GitHub provider | `src/server/providers/github.ts` | GitHub REST: contents, trees, blobs, commits, refs, PRs |
 | Shared models | `src/shared/` | API types and `comments.json` validation/serialization |
+| Desktop main | `src/desktop/main.ts` | Electron window/menu, settings, loopback server, folder picker IPC, encrypted token storage |
+| Preload bridge | `src/desktop/preload.ts` | Minimal `contextBridge` API and the per-launch secret; no Node access for the page |
+
+## Desktop app
+
+Electron's main process starts the same `createServer()` with `desktop: true`, `clientDir` pointing
+at the packaged React build, a mutable local-roots map and token persistence hooks. It listens on
+port `0` at `127.0.0.1`, then loads that origin in a `BrowserWindow`. `settings.json` in user-data
+holds the added folders, window bounds and a `safeStorage`-encrypted token. The preload script
+exposes only `chooseFolder`, repo add/remove/list, `openExternal` and the launch secret. Git is
+preferentially the binary provided by the optional `dugite` dependency, falling back to `git` on
+`PATH`; electron-builder unpacks that binary from asar.
 
 ## Data flow
 
@@ -74,9 +86,10 @@ GitHub tree API.
   as the base, falling back to the local ref when there is no reachable origin. Reads by branch
   name follow the same remote-tracking ref, so the editor never shows a stale checkout. Create a
   detached worktree from that base commit in a temp dir, create a new branch there,
-  write the files, commit with an explicit identity, push to `origin`, then use `gh pr create` when
-  the remote is GitHub. The user's checkout and uncommitted work are never modified; the worktree
-  is removed in `finally`.
+  write the files, commit with an explicit identity and push to `origin`. If the remote is GitHub and
+  a token is configured, the PR is opened through GitHub's REST API (`POST /repos/:owner/:repo/pulls`);
+  `prRepo` can override an unrecognised remote such as a local mirror. No `gh` CLI is needed. The
+  user's checkout and uncommitted work are never modified; the worktree is removed in `finally`.
 - **GitHub**: create blobs, a tree based on the base commit's tree, a commit and a ref through the
   REST API, then open a PR. No clone is needed.
 
@@ -105,15 +118,20 @@ calls `print()` so the user can choose **Save as PDF**; the same HTML can be dow
 
 ## Auth
 
-GitHub access supports both PAT and OAuth App sign-in.
+GitHub access supports PAT, OAuth App and device-flow sign-in.
 
 - PAT: pasted in the UI (`POST /api/token`, validated with `GET /user`), set via `GITHUB_TOKEN`, or
   read from `MARGINALIA_TOKEN_FILE`.
 - OAuth: `GET /api/auth/github/url` issues a single-use state value (10-minute expiry) and returns
   the GitHub authorize URL; the callback exchanges the code for a token, validates it with
   `GET /user`, stores it server-side and redirects to the UI.
+- Device flow (desktop): `POST /api/auth/github/device` returns a user code and verification URL;
+  `POST /api/auth/github/device/poll` waits for GitHub and installs the token. Only a public client
+  id is needed; no redirect URI or client secret.
 
-UI/OAuth tokens live only in server memory; env/file tokens are the fallback. The browser never
+UI/OAuth tokens live only in server memory for the web app. In the desktop app the main process
+encrypts every token change with Electron `safeStorage` into `settings.json` in user-data; if no
+system credential store is available the token stays in memory only. The browser/renderer never
 receives a token. This is still a single-user/single-identity model; a multi-user deployment would
 need per-user sessions and scoped tokens.
 
@@ -122,9 +140,12 @@ need per-user sessions and scoped tokens.
 - Repo aliases are resolved only against configured local roots; GitHub repo ids are regex-checked.
 - File paths are checked for traversal before any read or write, including asset reads.
 - Assets are served with an explicit content type and `Cache-Control: no-store`.
-- All git/gh invocations use `execFile` with argument arrays, never shell interpolation.
+- All git invocations use `execFile` with argument arrays, never shell interpolation.
 - Branch names are restricted to git-safe characters.
 - Local publishing never writes into the user's working tree.
+- The Electron server binds only `127.0.0.1` to a random port and requires a per-launch secret on
+  `/api`; the renderer has `nodeIntegration` off, `contextIsolation` on, and only the preload bridge.
+  External links and new windows are opened with `shell.openExternal`, never in the app window.
 
 ## Possible next steps
 

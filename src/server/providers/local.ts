@@ -2,18 +2,60 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEFAULT_COMMENTS_PATH, serializeComments } from '../../shared/comments'
 import { isImagePath } from '../../shared/assets'
 import type { FileEntry, PublishRequest, PublishResult, RepoSummary } from '../../shared/types'
+import { gitHubPullRequest, githubRepoFromRemote, type PullRequestInput } from './github'
 import { checkBranch, checkRelativePath, type GitProvider } from './types'
 
 const execFileAsync = promisify(execFile)
 
-async function run(cmd: string, args: string[], cwd: string): Promise<string> {
+export interface LocalGitProviderOptions {
+  dryRun?: boolean
+  /** Path to a bundled git binary; defaults to `git` on PATH. */
+  git?: string
+  /** Extra environment needed by a bundled git (dugite's GIT_EXEC_PATH, etc.). */
+  env?: NodeJS.ProcessEnv
+  /** GitHub token used to open PRs without the `gh` CLI. */
+  getToken?: () => string
+  fetchImpl?: typeof fetch
+  /** Override the GitHub repo when the origin URL is an alias or a local mirror. */
+  prRepo?: string
+  /** Injectable for tests. */
+  createPullRequest?: (input: PullRequestInput) => Promise<string>
+  /** Fallback when no GitHub token is set; injectable for tests. */
+  ghPullRequest?: (input: GhPullRequestInput) => Promise<string>
+}
+
+export interface GhPullRequestInput {
+  cwd: string
+  head: string
+  base: string
+  title: string
+  body: string
+}
+
+/** Open a PR with the GitHub CLI, using its own login (the web version's original path). */
+async function ghPullRequest(input: GhPullRequestInput): Promise<string> {
+  const output = await execFileAsync(
+    'gh',
+    ['pr', 'create', '--head', input.head, '--base', input.base, '--title', input.title, '--body', input.body],
+    { cwd: input.cwd, maxBuffer: 1024 * 1024 },
+  )
+  const url = output.stdout.trim().split('\n').filter(Boolean).at(-1)
+  if (!url) throw new Error('gh pr create printed no URL')
+  return url
+}
+
+async function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
   try {
-    const { stdout } = await execFileAsync(cmd, args, { cwd, maxBuffer: 16 * 1024 * 1024 })
+    const { stdout } = await execFileAsync(cmd, args, {
+      cwd,
+      env: env ? { ...process.env, ...env } : undefined,
+      maxBuffer: 16 * 1024 * 1024,
+    })
     return stdout.trim()
   } catch (error) {
     const err = error as { stderr?: string; message?: string }
@@ -33,12 +75,12 @@ function inside(root: string, relative: string): string {
  */
 const FETCH_TIMEOUT_MS = 15_000
 
-async function fetchOrigin(root: string): Promise<boolean> {
+async function fetchOrigin(root: string, gitCommand: string, env?: NodeJS.ProcessEnv): Promise<boolean> {
   try {
-    await execFileAsync('git', ['fetch', '--quiet', '--no-tags', 'origin'], {
+    await execFileAsync(gitCommand, ['fetch', '--quiet', '--no-tags', 'origin'], {
       cwd: root,
       timeout: FETCH_TIMEOUT_MS,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env },
     })
     return true
   } catch {
@@ -46,9 +88,14 @@ async function fetchOrigin(root: string): Promise<boolean> {
   }
 }
 
-async function commitAt(root: string, ref: string): Promise<string | null> {
+async function commitAt(
+  root: string,
+  ref: string,
+  gitCommand: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<string | null> {
   try {
-    return await run('git', ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`], root)
+    return await run(gitCommand, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`], root, env)
   } catch {
     return null
   }
@@ -71,8 +118,16 @@ export class LocalGitProvider implements GitProvider {
 
   constructor(
     private readonly roots: Map<string, string>,
-    private readonly options: { dryRun?: boolean } = {},
+    private readonly options: LocalGitProviderOptions = {},
   ) {}
+
+  private get gitCommand(): string {
+    return this.options.git ?? 'git'
+  }
+
+  private run(args: string[], cwd: string): Promise<string> {
+    return run(this.gitCommand, args, cwd, this.options.env)
+  }
 
   private repoPath(repo: string): string {
     const path = this.roots.get(repo)
@@ -85,7 +140,7 @@ export class LocalGitProvider implements GitProvider {
     for (const [id, path] of this.roots) {
       if (!existsSync(path)) continue
       try {
-        await run('git', ['rev-parse', '--show-toplevel'], path)
+        await this.run(['rev-parse', '--show-toplevel'], path)
         const defaultBranch = await this.defaultBranch(path)
         repos.push({ provider: 'local', id, fullName: id, defaultBranch })
       } catch {
@@ -97,7 +152,7 @@ export class LocalGitProvider implements GitProvider {
 
   private async defaultBranch(path: string): Promise<string | undefined> {
     try {
-      return await run('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], path)
+      return await this.run(['symbolic-ref', '--quiet', '--short', 'HEAD'], path)
     } catch {
       return undefined
     }
@@ -109,11 +164,11 @@ export class LocalGitProvider implements GitProvider {
    * the local ref is used as before.
    */
   private async baseCommit(path: string, ref?: string): Promise<string> {
-    if (await fetchOrigin(path)) {
-      const remote = await commitAt(path, `refs/remotes/origin/${ref ?? 'HEAD'}`)
+    if (await fetchOrigin(path, this.gitCommand, this.options.env)) {
+      const remote = await commitAt(path, `refs/remotes/origin/${ref ?? 'HEAD'}`, this.gitCommand, this.options.env)
       if (remote) return remote
     }
-    return run('git', ['rev-parse', '--verify', '--end-of-options', `${ref ?? 'HEAD'}^{commit}`], path)
+    return this.run(['rev-parse', '--verify', '--end-of-options', `${ref ?? 'HEAD'}^{commit}`], path)
   }
 
   /**
@@ -122,12 +177,12 @@ export class LocalGitProvider implements GitProvider {
    * SHAs and other refs are used as given.
    */
   private async readRef(path: string, ref: string): Promise<string> {
-    return (await commitAt(path, `refs/remotes/origin/${ref}`)) ?? ref
+    return (await commitAt(path, `refs/remotes/origin/${ref}`, this.gitCommand, this.options.env)) ?? ref
   }
 
   async listMarkdownFiles(repo: string, ref?: string): Promise<FileEntry[]> {
     const path = this.repoPath(repo)
-    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ? await this.readRef(path, ref) : 'HEAD'], path)
+    const output = await this.run(['ls-tree', '-r', '--name-only', ref ? await this.readRef(path, ref) : 'HEAD'], path)
     return output
       .split('\n')
       .filter((entry) => /\.(md|markdown)$/i.test(entry))
@@ -136,7 +191,7 @@ export class LocalGitProvider implements GitProvider {
 
   async listAssets(repo: string, ref?: string): Promise<FileEntry[]> {
     const path = this.repoPath(repo)
-    const output = await run('git', ['ls-tree', '-r', '--name-only', ref ? await this.readRef(path, ref) : 'HEAD'], path)
+    const output = await this.run(['ls-tree', '-r', '--name-only', ref ? await this.readRef(path, ref) : 'HEAD'], path)
     return output
       .split('\n')
       .filter(isImagePath)
@@ -150,9 +205,14 @@ export class LocalGitProvider implements GitProvider {
         // Not `run`: it trims stdout, which would drop the file's final
         // newline and make every publish rewrite the last line.
         const { stdout } = await execFileAsync(
-          'git',
+          this.gitCommand,
           ['show', `${await this.readRef(root, ref)}:${checkRelativePath(path)}`],
-          { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+          {
+            cwd: root,
+            encoding: 'utf8',
+            maxBuffer: 16 * 1024 * 1024,
+            env: { ...process.env, ...this.options.env },
+          },
         )
         return stdout
       } catch {
@@ -169,9 +229,14 @@ export class LocalGitProvider implements GitProvider {
     if (ref) {
       try {
         const output = await execFileAsync(
-          'git',
+          this.gitCommand,
           ['show', `${await this.readRef(root, ref)}:${checkRelativePath(path)}`],
-          { cwd: root, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
+          {
+            cwd: root,
+            encoding: 'buffer',
+            maxBuffer: 32 * 1024 * 1024,
+            env: { ...process.env, ...this.options.env },
+          },
         )
         return output.stdout as Buffer
       } catch {
@@ -213,8 +278,8 @@ export class LocalGitProvider implements GitProvider {
     const worktree = await mkdtemp(join(tmpdir(), 'marginalia-'))
     const notes: string[] = []
     try {
-      await run('git', ['worktree', 'add', '--detach', worktree, base], root)
-      await run('git', ['checkout', '-b', branch], worktree)
+      await this.run(['worktree', 'add', '--detach', worktree, base], root)
+      await this.run(['checkout', '-b', branch], worktree)
 
       for (const [path, change] of unique) {
         const full = inside(worktree, path)
@@ -229,60 +294,69 @@ export class LocalGitProvider implements GitProvider {
           change.encoding === 'base64' ? undefined : 'utf8',
         )
       }
-      await run('git', ['add', '-A', '--', ...unique.keys()], worktree)
-      await run(
-        'git',
+      await this.run(['add', '-A', '--', ...unique.keys()], worktree)
+      await this.run(
         ['-c', 'user.name=Marginalia', '-c', 'user.email=marginalia@localhost', 'commit', '-m', request.commitMessage],
         worktree,
       )
-      const commit = await run('git', ['rev-parse', 'HEAD'], worktree)
+      const commit = await this.run(['rev-parse', 'HEAD'], worktree)
 
       if (this.options.dryRun) {
         notes.push('Dry run: commit created in a temporary worktree, nothing pushed')
         return { branch, commit, pushed: false, notes }
       }
 
-      await run('git', ['push', '-u', 'origin', branch], worktree)
-      const remote = await run('git', ['remote', 'get-url', 'origin'], worktree).catch(() => '')
+      await this.run(['push', '-u', 'origin', branch], worktree)
+      const remote = await this.run(['remote', 'get-url', 'origin'], worktree).catch(() => '')
+      const githubRepo = this.options.prRepo ?? githubRepoFromRemote(remote)
+      const token = this.options.getToken?.() ?? ''
 
-      if (remote.includes('github.com')) {
+      if (githubRepo && request.pr && token) {
         try {
-          const output = await execFileAsync(
-            'gh',
-            [
-              'pr',
-              'create',
-              '--head',
-              branch,
-              '--base',
-              request.baseRef ?? (await this.defaultBranch(root)) ?? 'main',
-              '--title',
-              request.pr?.title || request.commitMessage,
-              '--body',
-              request.pr?.body ?? '',
-            ],
-            { cwd: worktree, maxBuffer: 1024 * 1024 },
-          )
-          const url = output.stdout.trim().split('\n').filter(Boolean).at(-1)
-          return { branch, commit, pushed: true, prUrl: url, notes }
+          const create = this.options.createPullRequest ?? gitHubPullRequest
+          const prUrl = await create({
+            repo: githubRepo,
+            head: branch,
+            base: request.baseRef ?? (await this.defaultBranch(root)) ?? 'main',
+            title: request.pr.title,
+            body: request.pr.body,
+            token,
+            fetchImpl: this.options.fetchImpl,
+          })
+          return { branch, commit, pushed: true, prUrl, notes }
         } catch (error) {
-          notes.push(`Branch pushed, but gh pr create failed: ${(error as Error).message}`)
+          notes.push(`Branch pushed, but GitHub PR creation failed: ${(error as Error).message}`)
+        }
+      } else if (githubRepo && request.pr) {
+        // No token in Marginalia: the GitHub CLI may still be signed in.
+        try {
+          const gh = this.options.ghPullRequest ?? ghPullRequest
+          const prUrl = await gh({
+            cwd: worktree,
+            head: branch,
+            base: request.baseRef ?? (await this.defaultBranch(root)) ?? 'main',
+            title: request.pr.title,
+            body: request.pr.body,
+          })
+          return { branch, commit, pushed: true, prUrl, notes }
+        } catch {
+          notes.push('Branch pushed; connect GitHub (or sign in to the GitHub CLI) to open the pull request')
         }
       } else {
-        notes.push('Branch pushed to origin; remote is not GitHub, so no PR was created')
+        notes.push('Branch pushed to origin; no pull request was created')
       }
       return { branch, commit, pushed: true, notes }
     } finally {
-      await run('git', ['worktree', 'remove', '--force', worktree], root).catch(() => {})
+      await this.run(['worktree', 'remove', '--force', worktree], root).catch(() => {})
       await rm(worktree, { recursive: true, force: true }).catch(() => {})
     }
   }
 }
 
-/** Parse MARGINALIA_LOCAL_REPOS: colon-separated absolute paths, aliases are directory names. */
+/** Parse MARGINALIA_LOCAL_REPOS with the platform path delimiter; aliases are directory names. */
 export function localRootsFromEnv(value: string | undefined): Map<string, string> {
   const roots = new Map<string, string>()
-  for (const entry of (value ?? '').split(':').filter(Boolean)) {
+  for (const entry of (value ?? '').split(delimiter).filter(Boolean)) {
     const path = resolve(entry)
     if (existsSync(path)) roots.set(basename(path), path)
   }

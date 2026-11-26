@@ -33,6 +33,54 @@ interface PullResponse {
   html_url: string
 }
 
+export interface PullRequestInput {
+  repo: string
+  head: string
+  base: string
+  title: string
+  body: string
+  token: string
+  fetchImpl?: typeof fetch
+}
+
+/** Accept HTTPS, git@ and ssh:// GitHub remotes, with or without .git. */
+export function githubRepoFromRemote(remote: string): string | null {
+  const clean = remote.trim().replace(/\.git$/, '')
+  const https = clean.match(/^https?:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/]+)$/i)
+  if (https) return `${https[1]}/${https[2]}`
+  const scp = clean.match(/^[^@/\s]+@github\.com:([^/]+)\/([^/]+)$/i)
+  if (scp) return `${scp[1]}/${scp[2]}`
+  const ssh = clean.match(/^ssh:\/\/[^@/]+@?github\.com\/([^/]+)\/([^/]+)$/i)
+  return ssh ? `${ssh[1]}/${ssh[2]}` : null
+}
+
+/** Open a PR through the GitHub API so the desktop app does not need `gh`. */
+export async function gitHubPullRequest(input: PullRequestInput): Promise<string> {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(input.repo)) throw new Error(`Invalid GitHub repo: ${input.repo}`)
+  const fetchImpl = input.fetchImpl ?? fetch
+  const response = await fetchImpl(`https://api.github.com/repos/${input.repo}/pulls`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${input.token}`,
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    body: JSON.stringify({
+      title: input.title,
+      body: input.body,
+      head: input.head,
+      base: input.base,
+    }),
+  })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`GitHub pull request: ${response.status} ${detail.slice(0, 300)}`)
+  }
+  const pr = (await response.json()) as PullResponse
+  return pr.html_url
+}
+
 /** GitHub REST provider. The PAT is supplied by a getter so it can be updated at runtime. */
 export class GitHubProvider implements GitProvider {
   readonly id = 'github' as const
@@ -227,17 +275,15 @@ export class GitHubProvider implements GitProvider {
     const notes = [`Published ${changes.size} file(s) to branch ${branch}`]
     let prUrl: string | undefined
     if (request.pr) {
-      const pr = await this.api<PullResponse>(`${base}/pulls`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: request.pr.title,
-          body: request.pr.body,
-          head: branch,
-          base: baseRef,
-        }),
+      prUrl = await gitHubPullRequest({
+        repo: request.repo,
+        head: branch,
+        base: baseRef,
+        title: request.pr.title,
+        body: request.pr.body,
+        token: this.getToken(),
+        fetchImpl: this.fetchImpl,
       })
-      prUrl = pr.html_url
     } else {
       notes.push('No PR title was supplied; only the branch was created')
     }

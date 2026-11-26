@@ -8,6 +8,19 @@ export interface ProviderInfo {
   configured: boolean
   detail?: string
   oauthConfigured?: boolean
+  /** Device flow needs only a public client id, so it works in the desktop app. */
+  deviceFlowConfigured?: boolean
+}
+
+export interface LocalRepoInfo {
+  id: string
+  path: string
+}
+
+export interface ConfigResponse {
+  providers: ProviderInfo[]
+  desktop: boolean
+  localRepos: LocalRepoInfo[]
 }
 
 export interface RepoSummary {
